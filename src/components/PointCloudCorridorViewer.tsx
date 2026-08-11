@@ -501,7 +501,8 @@ export function recomputeManualClassificationsData(
     const vy = by - ay;
     const vz = bz - az;
     const vLenSq = vx * vx + vy * vy + vz * vz;
-    const rSq = (ins.radius || 0.45) * (ins.radius || 0.45);
+    // Exactly 0.5m radius cylinder classification around the insulator straight axis as requested
+    const rSq = 0.5 * 0.5;
 
     let count = 0;
     for (let i = 0; i < pointCount; i++) {
@@ -1717,7 +1718,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const [insulatorTopPt, setInsulatorTopPt] = useState<{ x: number; y: number; z: number }>({ x: -70, y: 35, z: 0 });
   const [insulatorBottomPt, setInsulatorBottomPt] = useState<{ x: number; y: number; z: number }>({ x: -70, y: 33.2, z: 0 });
   const [insulatorLengthInput, setInsulatorLengthInput] = useState<number>(1.8);
-  const [insulatorRadiusInput, setInsulatorRadiusInput] = useState<number>(0.45);
+  const [insulatorRadiusInput, setInsulatorRadiusInput] = useState<number>(0.15);
   const [insulatorToleranceInput, setInsulatorToleranceInput] = useState<number>(15);
   const [insulatorTempStartPoint, setInsulatorTempStartPoint] = useState<{ x: number; y: number; z: number } | null>(null);
   const [insulatorDragStartPoint, setInsulatorDragStartPoint] = useState<{ x: number; y: number; z: number } | null>(null);
@@ -3393,6 +3394,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             ptColor = new THREE.Color(0xffb700); // Tower Amber/Gold
           } else if (classId === 14) {
             ptColor = new THREE.Color(0x00f2ff); // Power Conductors/Wires: Neon Electric Cyan
+          } else if (classId === 16) {
+            ptColor = new THREE.Color(0xd946ef); // Insulator Strings - Electric Magenta
           } else if (realData.colors && realData.colors.length > idx + 2) {
             // Keep real photo RGB color for non-power points so trees/ground do NOT turn black
             ptColor = new THREE.Color(realData.colors[idx], realData.colors[idx + 1], realData.colors[idx + 2]);
@@ -3516,6 +3519,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
     const overlaysGroup = new THREE.Group();
     overlaysGroup.name = 'manual_tags_3d_overlays';
+    overlaysGroup.visible = true;
 
     // 1. Render Fitted 3D Wire Catenary Curves
     const wires = realData.manualWires || [];
@@ -3550,15 +3554,15 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       const lineGeo = new THREE.BufferGeometry().setFromPoints(curvePoints);
       const lineMat = new THREE.LineBasicMaterial({
         color: 0x00ffff,
-        linewidth: 3,
+        linewidth: 1,
       });
       const wireLine = new THREE.Line(lineGeo, lineMat);
       overlaysGroup.add(wireLine);
 
-      // 3D Tube Mesh for solid curve volume in 3D canvas
+      // 3D Tube Mesh for solid curve volume in 3D canvas (very fine, thin line)
       try {
         const catenaryPath = new THREE.CatmullRomCurve3(curvePoints);
-        const tubeGeo = new THREE.TubeGeometry(catenaryPath, 40, 0.2, 8, false);
+        const tubeGeo = new THREE.TubeGeometry(catenaryPath, 40, 0.015, 8, false);
         const tubeMat = new THREE.MeshBasicMaterial({
           color: 0x00f2ff,
         });
@@ -3566,15 +3570,15 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         overlaysGroup.add(tubeMesh);
       } catch (err) {}
 
-      // Endpoint A Attachment Marker Sphere
-      const nodeAGeo = new THREE.SphereGeometry(0.7, 12, 12);
+      // Endpoint A Attachment Marker Sphere (small and delicate)
+      const nodeAGeo = new THREE.SphereGeometry(0.03, 12, 12);
       const nodeAMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
       const nodeAMesh = new THREE.Mesh(nodeAGeo, nodeAMat);
       nodeAMesh.position.set(ax, ay, az);
       overlaysGroup.add(nodeAMesh);
 
-      // Endpoint B Attachment Marker Sphere
-      const nodeBGeo = new THREE.SphereGeometry(0.7, 12, 12);
+      // Endpoint B Attachment Marker Sphere (small and delicate)
+      const nodeBGeo = new THREE.SphereGeometry(0.03, 12, 12);
       const nodeBMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
       const nodeBMesh = new THREE.Mesh(nodeBGeo, nodeBMat);
       nodeBMesh.position.set(bx, by, bz);
@@ -3609,26 +3613,30 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         new THREE.Vector3(tx, ty, tz),
         new THREE.Vector3(bx, by, bz)
       ]);
-      const rodMat = new THREE.LineBasicMaterial({ color: 0xd946ef, linewidth: 3 });
+      const rodMat = new THREE.LineBasicMaterial({ color: 0xd946ef, linewidth: 1 });
       overlaysGroup.add(new THREE.Line(rodGeo, rodMat));
 
       // 3D Disc Sheds along the insulator string
       const numDiscs = Math.max(4, Math.round(ins.length * 5));
+      const dir = new THREE.Vector3(bx - tx, by - ty, bz - tz).normalize();
+      const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+
       for (let d = 0; d <= numDiscs; d++) {
         const frac = d / numDiscs;
         const dx = tx + frac * (bx - tx);
         const dy = ty + frac * (by - ty);
         const dz = tz + frac * (bz - tz);
 
-        const discGeo = new THREE.CylinderGeometry(ins.radius, ins.radius, 0.08, 12);
+        const discGeo = new THREE.CylinderGeometry(ins.radius, ins.radius, 0.015, 12);
         const discMat = new THREE.MeshBasicMaterial({ color: 0xe879f9, transparent: true, opacity: 0.8 });
         const discMesh = new THREE.Mesh(discGeo, discMat);
         discMesh.position.set(dx, dy, dz);
+        discMesh.quaternion.copy(quat);
         overlaysGroup.add(discMesh);
       }
 
-      // Top & Bottom Attachment Spheres
-      const topSphereGeo = new THREE.SphereGeometry(0.35, 10, 10);
+      // Top & Bottom Attachment Spheres (small and delicate)
+      const topSphereGeo = new THREE.SphereGeometry(0.03, 10, 10);
       const topSphereMat = new THREE.MeshBasicMaterial({ color: 0xf0abfc });
       const topMesh = new THREE.Mesh(topSphereGeo, topSphereMat);
       topMesh.position.set(tx, ty, tz);
@@ -3641,46 +3649,31 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
     // 4. Render Live Drawing Rubberband Line Preview for Insulator Tagging
     const pStart = insulatorDragStartPoint || insulatorTempStartPoint || (wizardState.mode === 'insulator' ? wizardState.tempPoint : null);
-    if (pStart && hoveredCoords) {
+    if (pStart) {
       const tx = pStart.x, ty = pStart.y, tz = pStart.z;
-      const bx = hoveredCoords.x, by = hoveredCoords.y, bz = hoveredCoords.z;
-      const len = Math.hypot(bx - tx, by - ty, bz - tz) || 0.1;
-
-      // Glowing Cyan Vector Guide Line
-      const guideGeo = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(tx, ty, tz),
-        new THREE.Vector3(bx, by, bz)
-      ]);
-      const guideMat = new THREE.LineBasicMaterial({ color: 0x00f2ff, linewidth: 4 });
-      overlaysGroup.add(new THREE.Line(guideGeo, guideMat));
-
-      // Dynamic disc sheds preview
-      const numDiscs = Math.max(3, Math.round(len * 5));
-      for (let d = 0; d <= numDiscs; d++) {
-        const frac = d / numDiscs;
-        const dx = tx + frac * (bx - tx);
-        const dy = ty + frac * (by - ty);
-        const dz = tz + frac * (bz - tz);
-
-        const discGeo = new THREE.CylinderGeometry(insulatorRadiusInput, insulatorRadiusInput, 0.08, 12);
-        const discMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.85 });
-        const discMesh = new THREE.Mesh(discGeo, discMat);
-        discMesh.position.set(dx, dy, dz);
-        overlaysGroup.add(discMesh);
-      }
-
-      // Start & End indicator spheres
-      const spGeo = new THREE.SphereGeometry(0.4, 12, 12);
+      const spGeo = new THREE.SphereGeometry(0.03, 12, 12);
       const spMatStart = new THREE.MeshBasicMaterial({ color: 0x22c55e });
-      const spMatEnd = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
-
       const startMesh = new THREE.Mesh(spGeo, spMatStart);
       startMesh.position.set(tx, ty, tz);
       overlaysGroup.add(startMesh);
 
-      const endMesh = new THREE.Mesh(spGeo, spMatEnd);
-      endMesh.position.set(bx, by, bz);
-      overlaysGroup.add(endMesh);
+      if (hoveredCoords) {
+        const bx = hoveredCoords.x, by = hoveredCoords.y, bz = hoveredCoords.z;
+
+        // Glowing Cyan Vector Guide Line (a single thin line as requested)
+        const guideGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(tx, ty, tz),
+          new THREE.Vector3(bx, by, bz)
+        ]);
+        const guideMat = new THREE.LineBasicMaterial({ color: 0x00f2ff, linewidth: 1 });
+        overlaysGroup.add(new THREE.Line(guideGeo, guideMat));
+
+        // End indicator sphere (small and delicate)
+        const spMatEnd = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
+        const endMesh = new THREE.Mesh(spGeo, spMatEnd);
+        endMesh.position.set(bx, by, bz);
+        overlaysGroup.add(endMesh);
+      }
     }
 
     scene.add(overlaysGroup);
@@ -3691,7 +3684,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         if (grp) sceneRef.current.remove(grp);
       }
     };
-  }, [isOpen, activeSegmentId, renderEngine, detectionVersion, insulatorDragStartPoint, insulatorTempStartPoint, hoveredCoords, wizardState, insulatorRadiusInput]);
+  }, [isOpen, activeSegmentId, renderEngine, detectionVersion, insulatorDragStartPoint, insulatorTempStartPoint, hoveredCoords, wizardState, insulatorRadiusInput, isShiftPressed]);
 
   // 3D Point Cloud Picking & Hover Reticle Handler
   useEffect(() => {
@@ -3701,45 +3694,19 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const scene = sceneRef.current;
     const camera = cameraRef.current;
     const raycaster = new THREE.Raycaster();
-    raycaster.params.Points.threshold = 2.0;
+    raycaster.params.Points.threshold = 0.3;
 
     // High-tech SVG Crosshair Collision Target Cursor
     const COLLISION_CROSSHAIR_CURSOR = `url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'><circle cx='16' cy='16' r='11' fill='none' stroke='%2300f2ff' stroke-width='2' stroke-dasharray='4 2'/><circle cx='16' cy='16' r='3' fill='%23ffb700'/><circle cx='16' cy='16' r='1.5' fill='%23ffffff'/><line x1='16' y1='0' x2='16' y2='8' stroke='%2300f2ff' stroke-width='2'/><line x1='16' y1='24' x2='16' y2='32' stroke='%2300f2ff' stroke-width='2'/><line x1='0' y1='16' x2='8' y2='16' stroke='%2300f2ff' stroke-width='2'/><line x1='24' y1='16' x2='32' y2='16' stroke='%2300f2ff' stroke-width='2'/></svg>") 16 16, crosshair`;
 
-    // Create 3D Collision Reticle Group in Three.js
+    // Create 3D Collision Reticle Group in Three.js (a single precise small dot)
     const reticleGroup = new THREE.Group();
 
-    // 1. Outer Cyan Optic Ring
-    const ringGeo = new THREE.RingGeometry(0.8, 1.4, 32);
-    ringGeo.rotateX(-Math.PI / 2);
-    const ringMat = new THREE.MeshBasicMaterial({ color: 0x00f2ff, side: THREE.DoubleSide, transparent: true, opacity: 0.9 });
-    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
-    reticleGroup.add(ringMesh);
-
-    // 2. Center Focal Amber Point
-    const sphereGeo = new THREE.SphereGeometry(0.35, 16, 16);
-    const sphereMat = new THREE.MeshBasicMaterial({ color: 0xffb700 });
+    // A small, delicate indicator dot
+    const sphereGeo = new THREE.SphereGeometry(0.04, 16, 16);
+    const sphereMat = new THREE.MeshBasicMaterial({ color: 0x00f2ff });
     const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
     reticleGroup.add(sphereMesh);
-
-    // 3. 4-Axis Crosshair Tick Lines in XZ Plane (+)
-    const lineMat = new THREE.LineBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.85 });
-    const createCrosshairTick = (x1: number, z1: number, x2: number, z2: number) => {
-      const pts = [new THREE.Vector3(x1, 0, z1), new THREE.Vector3(x2, 0, z2)];
-      const geo = new THREE.BufferGeometry().setFromPoints(pts);
-      return new THREE.Line(geo, lineMat);
-    };
-    reticleGroup.add(createCrosshairTick(-2.2, 0, -1.4, 0));
-    reticleGroup.add(createCrosshairTick(1.4, 0, 2.2, 0));
-    reticleGroup.add(createCrosshairTick(0, -2.2, 0, -1.4));
-    reticleGroup.add(createCrosshairTick(0, 1.4, 0, 2.2));
-
-    // 4. Vertical Elevation Axis Line (Y Axis)
-    const heightPts = [new THREE.Vector3(0, -0.5, 0), new THREE.Vector3(0, 3.0, 0)];
-    const heightGeo = new THREE.BufferGeometry().setFromPoints(heightPts);
-    const heightMat = new THREE.LineBasicMaterial({ color: 0xffb700, transparent: true, opacity: 0.75 });
-    const heightLine = new THREE.Line(heightGeo, heightMat);
-    reticleGroup.add(heightLine);
 
     reticleGroup.visible = false;
     scene.add(reticleGroup);
@@ -3770,15 +3737,41 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         return;
       }
 
-      if (!isCollisionActive && activeCanvasMode !== 'insulator') {
-        // Shift is NOT held and not in insulator mode: Show camera navigation cursor, hide collision reticle
+      // If active dragging of an insulator, project mouse coordinate onto a plane passing through start point
+      if (isInsulatorDragging && insulatorDragStartPoint) {
+        const rect = canvas.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((e.clientX - rect.left) / rect.width) * 2 - 1,
+          -((e.clientY - rect.top) / rect.height) * 2 + 1
+        );
+        raycaster.setFromCamera(mouse, camera);
+
+        const planeNormal = new THREE.Vector3();
+        camera.getWorldDirection(planeNormal);
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+          planeNormal,
+          new THREE.Vector3(insulatorDragStartPoint.x, insulatorDragStartPoint.y, insulatorDragStartPoint.z)
+        );
+        const intersectPoint = new THREE.Vector3();
+        if (raycaster.ray.intersectPlane(plane, intersectPoint)) {
+          setHoveredCoords({
+            x: Number(intersectPoint.x.toFixed(3)),
+            y: Number(intersectPoint.y.toFixed(3)),
+            z: Number(intersectPoint.z.toFixed(3)),
+          });
+        }
+        return;
+      }
+
+      if (!isCollisionActive) {
+        // Shift is NOT held: Show camera navigation cursor, hide collision reticle
         canvas.style.cursor = 'grab';
         reticleGroup.visible = false;
         setHoveredCoords(null);
         return;
       }
 
-      // Shift is held OR active mode is insulator: Show collision crosshair cursor & 3D reticle
+      // Shift is held: Show collision crosshair cursor & 3D reticle
       canvas.style.cursor = COLLISION_CROSSHAIR_CURSOR;
 
       const rect = canvas.getBoundingClientRect();
@@ -3802,9 +3795,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           reticleGroup.position.set(hx, hy + 0.1, hz);
           reticleGroup.visible = true;
           setHoveredCoords({
-            x: Number(hx.toFixed(1)),
-            y: Number(hy.toFixed(1)),
-            z: Number(hz.toFixed(1)),
+            x: Number(hx.toFixed(3)),
+            y: Number(hy.toFixed(3)),
+            z: Number(hz.toFixed(3)),
           });
         } else {
           reticleGroup.visible = false;
@@ -3835,9 +3828,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
               if (intersects.length > 0) {
                 const hit = intersects[0];
                 const startCoords = {
-                  x: Number(hit.point.x.toFixed(1)),
-                  y: Number(hit.point.y.toFixed(1)),
-                  z: Number(hit.point.z.toFixed(1)),
+                  x: Number(hit.point.x.toFixed(3)),
+                  y: Number(hit.point.y.toFixed(3)),
+                  z: Number(hit.point.z.toFixed(3)),
                 };
                 setInsulatorDragStartPoint(startCoords);
                 setIsInsulatorDragging(true);
@@ -3870,7 +3863,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       if (controlsRef.current) controlsRef.current.enabled = true;
 
       const isCollisionActive = e.shiftKey || isShiftPressed;
-      canvas.style.cursor = isCollisionActive || activeCanvasMode === 'insulator' ? COLLISION_CROSSHAIR_CURSOR : 'grab';
+      canvas.style.cursor = isCollisionActive ? COLLISION_CROSSHAIR_CURSOR : 'grab';
 
       const dragDist = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
 
@@ -3883,31 +3876,41 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           -((e.clientY - rect.top) / rect.height) * 2 + 1
         );
         raycaster.setFromCamera(mouse, camera);
-        const ptMesh = getPtMesh();
+
+        const planeNormal = new THREE.Vector3();
+        camera.getWorldDirection(planeNormal);
+        const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+          planeNormal,
+          new THREE.Vector3(insulatorDragStartPoint.x, insulatorDragStartPoint.y, insulatorDragStartPoint.z)
+        );
+        const intersectPoint = new THREE.Vector3();
         let endCoords = hoveredCoords;
-        if (ptMesh) {
-          const intersects = raycaster.intersectObject(ptMesh);
-          if (intersects.length > 0) {
-            endCoords = {
-              x: Number(intersects[0].point.x.toFixed(1)),
-              y: Number(intersects[0].point.y.toFixed(1)),
-              z: Number(intersects[0].point.z.toFixed(1)),
-            };
-          }
+        if (raycaster.ray.intersectPlane(plane, intersectPoint)) {
+          endCoords = {
+            x: Number(intersectPoint.x.toFixed(3)),
+            y: Number(intersectPoint.y.toFixed(3)),
+            z: Number(intersectPoint.z.toFixed(3)),
+          };
         }
 
+        let lineAdded = false;
         if (endCoords) {
           const lineLen = Math.hypot(endCoords.x - insulatorDragStartPoint.x, endCoords.y - insulatorDragStartPoint.y, endCoords.z - insulatorDragStartPoint.z);
-          if (lineLen >= 0.25) {
+          if (lineLen >= 0.25 && dragDist > 10) {
             setInsulatorTopPt(insulatorDragStartPoint);
             setInsulatorBottomPt(endCoords);
             setInsulatorLengthInput(Number(lineLen.toFixed(2)));
             handleAddInsulatorTagWithCoords("绝缘子串 (划线标记)", insulatorDragStartPoint, endCoords, lineLen, insulatorRadiusInput, 'suspension');
-            setInsulatorDragStartPoint(null);
-            setInsulatorTempStartPoint(null);
-            setWizardState({ mode: null, step: 1, tempPoint: null });
-            return;
+            lineAdded = true;
           }
+        }
+
+        // Clean up drag-specific state
+        setInsulatorDragStartPoint(null);
+        if (lineAdded) {
+          setInsulatorTempStartPoint(null);
+          setWizardState({ mode: null, step: 1, tempPoint: null });
+          return;
         }
       }
 
@@ -3949,9 +3952,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             pickedZ = posAttr.getZ(hit.index);
           }
           const coords = {
-            x: Number(pickedX.toFixed(1)),
-            y: Number(pickedY.toFixed(1)),
-            z: Number(pickedZ.toFixed(1)),
+            x: Number(pickedX.toFixed(3)),
+            y: Number(pickedY.toFixed(3)),
+            z: Number(pickedZ.toFixed(3)),
           };
 
           // Trigger picking/tagging ONLY if Shift is pressed
