@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,11 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.db import init_db
 from app.routers import files
 from app.routers import tasks
+from app import ws as ws_module
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     init_db()
+    ws_module.loop = asyncio.get_running_loop()
     yield
 
 
@@ -24,6 +27,7 @@ app.add_middleware(
 
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(ws_module.router)
 
 
 @app.get("/api/health")
