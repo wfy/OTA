@@ -1,0 +1,46 @@
+{
+  "35kV": {
+    "safe": 8.0,
+    "buga": 2.5,
+    "bugbp": 3.0,
+    "bugb": 4.0,
+    "bugc": 5.5,
+    "normal": 10.0,
+    "extend": 1.0
+  },
+  "110kV": {
+    "safe": 8.0,
+    "buga": 3.0,
+    "bugbp": -1.0,
+    "bugb": 4.0,
+    "bugc": 5.0,
+    "normal": 10.0,
+    "extend": 10.0
+  },
+  "220kV": {
+    "safe": 12.0,
+    "buga": 3.5,
+    "bugbp": 4.0,
+    "bugb": 5.0,
+    "bugc": 6.5,
+    "normal": 10.0,
+    "extend": 6.0
+  },
+  "500kV": {
+    "safe": 15.0,
+    "buga": 5.0,
+    "bugbp": "6.3",
+    "bugb": 8.0,
+    "bugc": 12.0,
+    "normal": "10",
+    "extend": 6.0
+  },
+  "1000kV": {
+    "safe": "14",
+    "buga": "11.2",
+    "bugbp": "12.6",
+    "bugb": "12.6",
+    "bugc": "14",
+    "normal": "14"
+  }
+}

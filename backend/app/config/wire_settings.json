@@ -1,0 +1,20 @@
+{
+  "ACCC-816": {
+    "firsttemp": "0",
+    "area": "465.48",
+    "diameter": "25.15",
+    "weight": "1235.16",
+    "tearforce": "135000",
+    "EEC": "65000",
+    "TEC": "13"
+  },
+  "AF（SZ）+S4A-400+52": {
+    "firsttemp": "0",
+    "area": "452",
+    "diameter": "25.2",
+    "weight": "1509",
+    "tearforce": "122000",
+    "EEC": "70500",
+    "TEC": "15"
+  }
+}
