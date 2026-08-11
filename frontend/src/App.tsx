@@ -21,9 +21,16 @@ import { ComplianceReport } from './components/ComplianceReport';
 import { AiAssistant } from './components/AiAssistant';
 import { FormulaModal } from './components/FormulaModal';
 import { PointCloudCorridorViewer } from './components/PointCloudCorridorViewer';
+import { UploadPanel } from './components/UploadPanel';
+import { api } from './api/client';
+import { useAppStore } from './store/useAppStore';
 import { Sliders, Table, ChevronDown, ChevronUp, X, Sparkles } from 'lucide-react';
 
 export default function App() {
+  const doneUpload = useAppStore((s) => s.uploads.find((u) => u.status === 'done'));
+  const pendingResult = doneUpload?.resultKey
+    ? { key: doneUpload.resultKey, url: api.resultUrl(doneUpload.resultKey), name: `${doneUpload.filename}_sign.las` }
+    : null;
   const [voltageLevel, setVoltageLevel] = useState<number>(220);
   const [activeTab, setActiveTab] = useState<
     'profile' | 'charts' | 'stringing' | 'compliance' | 'windswing'
@@ -415,6 +422,8 @@ export default function App() {
         windCondition={conditions.find((c) => c.id === selectedConditionId)}
       />
 
+      <UploadPanel />
+
       {/* 7. Corridor LiDAR Point Cloud & Google Earth 3D Engine Modal */}
       <PointCloudCorridorViewer
         isOpen={isPointCloudModalOpen}
@@ -423,6 +432,7 @@ export default function App() {
         conductor={selectedConductor}
         results={results}
         selectedConditionId={selectedConditionId}
+        pendingResult={pendingResult}
       />
     </div>
   );

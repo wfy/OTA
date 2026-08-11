@@ -1658,6 +1658,7 @@ interface PointCloudCorridorViewerProps {
   selectedConditionId: string;
   isOpen: boolean;
   onClose: () => void;
+  pendingResult?: { key: string; url: string; name: string } | null;
 }
 
 export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> = ({
@@ -1667,6 +1668,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   selectedConditionId,
   isOpen,
   onClose,
+  pendingResult,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -2749,6 +2751,19 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     setIsParsingGeo(false);
     setGeoParseNotice(geoRes.statusNote);
   };
+
+  useEffect(() => {
+    if (!pendingResult) return;
+    (async () => {
+      try {
+        const blob = await fetch(pendingResult.url).then((r) => r.blob());
+        const file = new File([blob], pendingResult.name, { type: 'application/octet-stream' });
+        await processLocalFiles([file]);
+      } catch (err) {
+        setDetectionNotice(`远程点云加载失败: ${String(err)}`);
+      }
+    })();
+  }, [pendingResult]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
