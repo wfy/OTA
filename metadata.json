@@ -1,0 +1,6 @@
+{
+  "name": "架空输电线路导线与绝缘子工况计算与可视化分析系统",
+  "description": "基于 DL/T 5582-2020 架空输电线路电气设计规程，提供导线状态方程求解、各种工况比荷计算、应力与弧垂曲线绘制、档距剖面动态交互模拟及绝缘子串风偏校验。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

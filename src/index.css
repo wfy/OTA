@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'JetBrains Mono', 'Noto Sans SC', monospace;
+    background-color: #0b0f19;
+    color: #f1f5f9;
+  }
+}
+
+/* Ensure backdrop-filter works reliably across all browsers & webviews with vendor prefixes */
+.backdrop-blur-none { -webkit-backdrop-filter: none; backdrop-filter: none; }
+.backdrop-blur-sm   { -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px); }
+.backdrop-blur      { -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.backdrop-blur-md   { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+.backdrop-blur-lg   { -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px); }
+.backdrop-blur-xl   { -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); }
+.backdrop-blur-2xl  { -webkit-backdrop-filter: blur(40px); backdrop-filter: blur(40px); }
+.backdrop-blur-3xl  { -webkit-backdrop-filter: blur(64px); backdrop-filter: blur(64px); }
+
+/* Custom High-Quality Glassmorphism / Frosted Glass Utility Classes */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.38) !important;
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+}
+
+.glass-panel-dark {
+  background: rgba(15, 23, 42, 0.28) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  backdrop-filter: blur(24px) saturate(190%);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.06) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  backdrop-filter: blur(16px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2) !important;
+}
+
+.glass-inner {
+  background: rgba(255, 255, 255, 0.08) !important;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+}
+
+.glass-input {
+  background: rgba(255, 255, 255, 0.08) !important;
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: #f8fafc !important;
+}
+
+.glass-input:focus {
+  background: rgba(255, 255, 255, 0.14) !important;
+  border-color: rgba(34, 211, 238, 0.7) !important;
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.3) !important;
+}
+
+.glass-button {
+  background: rgba(255, 255, 255, 0.09) !important;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  color: #f1f5f9 !important;
+}
+
+.glass-button:hover {
+  background: rgba(255, 255, 255, 0.18) !important;
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+
+/* Custom retro high-density scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.6);
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(51, 65, 85, 0.8);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(100, 116, 139, 1);
+}
+
+.brutalist-card {
+  background-color: #E4E3E0;
+  border: 1px solid #141414;
+  box-shadow: 2px 2px 0px 0px #141414;
+}
+
+.brutalist-input {
+  background-color: transparent;
+  border: 1px solid #141414;
+  color: #141414;
+  border-radius: 0;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.brutalist-input:focus {
+  outline: 2px solid #141414;
+  outline-offset: -1px;
+}
+
