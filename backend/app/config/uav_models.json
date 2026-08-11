@@ -1,0 +1,274 @@
+[
+  {
+    "name": "DJI 精灵4 RTK",
+    "droneEnumValue": "0",
+    "droneSubEnumValue": "0",
+    "payloadEnumValue": "0",
+    "payloadSubEnumValue": "0",
+    "payloadPositionIndex": "0",
+    "supportZoom": false,
+    "pitchmin": -90,
+    "pitchmax": 30,
+    "safex": 3,
+    "safey": 5,
+    "diameter": 0.35,
+    "cameras": [
+      {
+        "name": "相机",
+        "sensorsize": "12.8,9.6,2.7",
+        "f": 24,
+        "reslution": "400x300",
+        "digitalzoom": 1,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      }
+    ]
+  },
+  {
+    "name": "Mavic 2 行业进阶版",
+    "droneEnumValue": "0",
+    "droneSubEnumValue": "1",
+    "payloadEnumValue": "0",
+    "payloadSubEnumValue": "0",
+    "payloadPositionIndex": "0",
+    "supportZoom": false,
+    "pitchmin": -90,
+    "pitchmax": 30,
+    "safex": 3,
+    "safey": 5,
+    "diameter": 0.354,
+    "cameras": [
+      {
+        "name": "可见光",
+        "sensorsize": "6.4,4.8,5.408",
+        "f": 24,
+        "reslution": "400x300",
+        "digitalzoom": 1,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "红外",
+        "sensorsize": "6.16,4.62,5.619",
+        "f": 38,
+        "reslution": "640x480",
+        "digitalzoom": 1,
+        "opticalzoom": 1,
+        "infraredray": true,
+        "ultraviolet": false
+      }
+    ]
+  },
+  {
+    "name": "DJI Mavic 3E",
+    "droneEnumValue": "77",
+    "droneSubEnumValue": "0",
+    "payloadEnumValue": "66",
+    "payloadSubEnumValue": "0",
+    "payloadPositionIndex": "0",
+    "supportZoom": true,
+    "pitchmin": -90,
+    "pitchmax": 35,
+    "safex": 3,
+    "safey": 5,
+    "diameter": 0.3801,
+    "cameras": [
+      {
+        "name": "广角",
+        "sensorsize": "17.3,13,2",
+        "f": 24,
+        "reslution": "400x300",
+        "digitalzoom": 1,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "长焦",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 168,
+        "reslution": "400x300",
+        "digitalzoom": 56,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      }
+    ]
+  },
+  {
+    "name": "DJI Mavic 3T",
+    "droneEnumValue": "77",
+    "droneSubEnumValue": "1",
+    "payloadEnumValue": "67",
+    "payloadSubEnumValue": "0",
+    "payloadPositionIndex": "0",
+    "supportZoom": true,
+    "pitchmin": -90,
+    "pitchmax": 35,
+    "safex": 3,
+    "safey": 5,
+    "diameter": 0.3801,
+    "cameras": [
+      {
+        "name": "广角",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 24,
+        "reslution": "400x300",
+        "digitalzoom": 1,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "长焦",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 168,
+        "reslution": "400x300",
+        "digitalzoom": 56,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "红外",
+        "sensorsize": "7.68,6.144,5.74",
+        "f": 40,
+        "reslution": "640x512",
+        "digitalzoom": 28,
+        "opticalzoom": 1,
+        "infraredray": true,
+        "ultraviolet": false
+      }
+    ]
+  },
+  {
+    "name": "DJI Mavic 3TD",
+    "droneEnumValue": "91",
+    "droneSubEnumValue": "1",
+    "payloadEnumValue": "81",
+    "payloadSubEnumValue": "0",
+    "payloadPositionIndex": "0",
+    "supportZoom": true,
+    "pitchmin": -90,
+    "pitchmax": 35,
+    "safex": 3,
+    "safey": 5,
+    "diameter": 0.3801,
+    "cameras": [
+      {
+        "name": "广角",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 24,
+        "reslution": "400x300",
+        "digitalzoom": 1,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "长焦",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 168,
+        "reslution": "400x300",
+        "digitalzoom": 56,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "红外",
+        "sensorsize": "7.68,6.144,5.74",
+        "f": 40,
+        "reslution": "640x512",
+        "digitalzoom": 28,
+        "opticalzoom": 1,
+        "infraredray": true,
+        "ultraviolet": false
+      }
+    ]
+  },
+  {
+    "name": "经纬 M30",
+    "droneEnumValue": "67",
+    "droneSubEnumValue": "0",
+    "payloadEnumValue": "52",
+    "payloadSubEnumValue": "0",
+    "payloadPositionIndex": "0",
+    "supportZoom": true,
+    "pitchmin": -120,
+    "pitchmax": 45,
+    "safex": 5,
+    "safey": 10,
+    "diameter": 0.668,
+    "cameras": [
+      {
+        "name": "广角",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 24,
+        "reslution": "400x300",
+        "digitalzoom": 1,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "变焦",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 120,
+        "reslution": "400x300",
+        "digitalzoom": 200,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      }
+    ]
+  },
+  {
+    "name": "经纬 M30T",
+    "droneEnumValue": "67",
+    "droneSubEnumValue": "1",
+    "payloadEnumValue": "53",
+    "payloadSubEnumValue": "0",
+    "payloadPositionIndex": "0",
+    "supportZoom": true,
+    "pitchmin": -120,
+    "pitchmax": 45,
+    "safex": 5,
+    "safey": 10,
+    "diameter": 0.668,
+    "cameras": [
+      {
+        "name": "广角",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 24,
+        "reslution": "400x300",
+        "digitalzoom": 1,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "变焦",
+        "sensorsize": "6.4,4.8,5.4",
+        "f": 120,
+        "reslution": "400x300",
+        "digitalzoom": 200,
+        "opticalzoom": 1,
+        "infraredray": false,
+        "ultraviolet": false
+      },
+      {
+        "name": "红外",
+        "sensorsize": "7.68,6.144,5.74",
+        "f": 40,
+        "reslution": "640x512",
+        "digitalzoom": 28,
+        "opticalzoom": 1,
+        "infraredray": true,
+        "ultraviolet": false
+      }
+    ]
+  }
+]

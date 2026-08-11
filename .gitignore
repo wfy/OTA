@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+backend/.venv/
+backend/**/__pycache__/
+*.pyc
+data/
+.pytest_cache/
+frontend/package-lock.json
