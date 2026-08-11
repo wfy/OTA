@@ -14,6 +14,7 @@ MINIO_BUCKET = os.getenv("MINIO_BUCKET", "ota")
 
 class Storage:
     def __init__(self):
+        self.fallback = Path(os.getenv("MINIO_FALLBACK_DIR", "data/uploads"))
         self.minio = None
         if MINIO_ENDPOINT:
             self.minio = Minio(
@@ -26,7 +27,7 @@ class Storage:
                 self.minio.make_bucket(MINIO_BUCKET)
 
     def _chunk_dir(self, upload_id: str) -> Path:
-        d = FALLBACK_DIR / "chunks" / upload_id
+        d = self.fallback / "chunks" / upload_id
         d.mkdir(parents=True, exist_ok=True)
         return d
 
@@ -53,7 +54,7 @@ class Storage:
             )
             self.minio.put_object(MINIO_BUCKET, key, io.BytesIO(merged), len(merged))
         else:
-            out = FALLBACK_DIR / key
+            out = self.fallback / key
             out.parent.mkdir(parents=True, exist_ok=True)
             with out.open("wb") as f:
                 for part in sorted(self._chunk_dir(upload_id).glob("*.part")):
@@ -64,13 +65,13 @@ class Storage:
     def open(self, key: str) -> io.BytesIO:
         if self.minio:
             return io.BytesIO(self.minio.get_object(MINIO_BUCKET, key).read())
-        return io.BytesIO((FALLBACK_DIR / key).read_bytes())
+        return io.BytesIO((self.fallback / key).read_bytes())
 
     def save_result(self, key: str, data: bytes) -> str:
         if self.minio:
             self.minio.put_object(MINIO_BUCKET, key, io.BytesIO(data), len(data))
         else:
-            p = FALLBACK_DIR / key
+            p = self.fallback / key
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_bytes(data)
         return key

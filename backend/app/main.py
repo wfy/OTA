@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
 from app.routers import files
+from app.routers import tasks
 
 
 @asynccontextmanager
@@ -22,6 +23,7 @@ app.add_middleware(
 )
 
 app.include_router(files.router, prefix="/api/files", tags=["files"])
+app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 
 
 @app.get("/api/health")
