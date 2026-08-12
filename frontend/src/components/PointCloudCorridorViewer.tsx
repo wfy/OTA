@@ -1650,7 +1650,7 @@ interface PointCloudCorridorViewerProps {
   pendingResult?: { key: string; url: string; name: string; segmentId?: string } | null;
   embedded?: boolean;
   onRequestUpload?: (file: File, segmentId: string) => void;
-  treeContainerRef?: React.RefObject<HTMLDivElement | null>;
+  treeHost?: HTMLElement | null;
 }
 
 export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> = ({
@@ -1663,7 +1663,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   pendingResult,
   embedded,
   onRequestUpload,
-  treeContainerRef,
+  treeHost,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -1754,10 +1754,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   // Active Segment ID currently rendered in primary 3D window
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const lastUpload = useAppStore((s) => s.uploads[s.uploads.length - 1]);
-  const [treeHost, setTreeHost] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    setTreeHost(treeContainerRef?.current ?? null);
-  }, [treeContainerRef]);
 
   // Tree Barrier Analysis Core Function
   const handleRunTreeBarrierAnalysis = (radiusParam?: number) => {
@@ -2774,6 +2770,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         if (existingSegmentId && pendingParsedDataRef.current) {
           loadedPointCloudMapRef.current[existingSegmentId] = pendingParsedDataRef.current;
           setActiveSegmentId(existingSegmentId);
+          setDetectionVersion((v) => v + 1);
           setDetectionNotice(null);
         } else {
           pendingAutoBuildRef.current = true;
@@ -4270,7 +4267,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   };
 
   const treeAside = (
-    <aside className={`${embedded ? 'w-full' : 'w-80'} bg-slate-900/50 backdrop-blur-2xl ${embedded ? '' : 'border-r border-white/20'} flex flex-col z-10 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] overflow-hidden`}>
+    <aside className={`${embedded ? 'w-full h-full' : 'w-80'} bg-slate-900/50 backdrop-blur-2xl ${embedded ? '' : 'border-r border-white/20'} flex flex-col z-10 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] overflow-hidden`}>
       {/* Sidebar Header & Search Bar */}
       <div className="p-3 border-b border-white/15 space-y-2 bg-black/30 backdrop-blur-md">
         <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
