@@ -4263,9 +4263,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   };
 
   return (
-    <div className={`${embedded ? 'absolute inset-0 z-0' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
+    <div className={`${embedded ? 'absolute inset-0 z-0 pl-[352px]' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
       {/* Top Cesium/Google Earth Style Global Header */}
-      <header className={`h-13 bg-slate-900/50 border-b border-white/20 backdrop-blur-2xl px-4 flex items-center justify-between z-20 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] ${embedded ? 'pl-[348px]' : ''}`}>
+      <header className="h-13 bg-slate-900/50 border-b border-white/20 backdrop-blur-2xl px-4 flex items-center justify-between z-20 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]">
         <div className="flex items-center gap-3">
           {/* macOS window traffic light dots */}
           <div className="flex items-center gap-1.5 mr-1">
