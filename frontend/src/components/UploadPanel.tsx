@@ -63,8 +63,15 @@ export function UploadPanel() {
         accept=".las,.laz"
         disabled={busy}
         onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-        className="block w-full text-xs"
+        className="hidden"
       />
+      <button
+        onClick={() => inputRef.current?.click()}
+        disabled={busy}
+        className="w-full px-3 py-1.5 rounded-xl text-xs font-bold bg-cyan-500/20 text-cyan-200 border border-cyan-400/40 hover:bg-cyan-500/35 transition-all cursor-pointer"
+      >
+        选择 LAS 文件
+      </button>
       <ul className="space-y-2">
         {uploads.map((u) => (
           <li key={u.id} className="text-xs space-y-1">
