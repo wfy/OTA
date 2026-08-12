@@ -2752,18 +2752,24 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     setGeoParseNotice(geoRes.statusNote);
   };
 
+  const loadedRemoteKeysRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
-    if (!pendingResult) return;
+    if (!isOpen || !pendingResult) return;
+    if (loadedRemoteKeysRef.current.has(pendingResult.key)) return;
+    loadedRemoteKeysRef.current.add(pendingResult.key);
     (async () => {
       try {
+        setDetectionNotice(`正在加载远程点云: ${pendingResult.name}`);
         const blob = await fetch(pendingResult.url).then((r) => r.blob());
         const file = new File([blob], pendingResult.name, { type: 'application/octet-stream' });
         await processLocalFiles([file]);
+        setDetectionNotice(null);
       } catch (err) {
         setDetectionNotice(`远程点云加载失败: ${String(err)}`);
       }
     })();
-  }, [pendingResult]);
+  }, [isOpen, pendingResult]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
