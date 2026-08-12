@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 
 import { api } from '../api/client';
 import { useAppStore } from '../store/useAppStore';
+import { AnnotationPanel } from './AnnotationPanel';
 
 const CHUNK = 8 * 1024 * 1024;
 
@@ -23,6 +24,7 @@ export function UploadPanel() {
         });
       }
       const { las_file_id } = await api.completeUpload(upload_id);
+      updateUpload(upload_id, { lasFileId: las_file_id });
       const task = await api.createTask(las_file_id);
       updateUpload(upload_id, { status: 'processing', message: '任务已提交' });
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -69,6 +71,7 @@ export function UploadPanel() {
               <div className="h-1 rounded bg-emerald-400" style={{ width: `${u.progress}%` }} />
             </div>
             <p className="text-white/60">{u.message}</p>
+            {u.status === 'done' && u.lasFileId && <AnnotationPanel upload={u} />}
           </li>
         ))}
       </ul>

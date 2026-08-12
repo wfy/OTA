@@ -25,6 +25,22 @@ export interface TaskOut {
   error: string;
 }
 
+export interface AnnotationOut {
+  id: string;
+  las_file_id: string;
+  label: string;
+  source: string;
+  bbox: Record<string, number> | null;
+  points_count: number;
+  created_at: string;
+}
+
+export interface AnnotationExportOut {
+  key: string;
+  url: string;
+  counts: Record<string, number>;
+}
+
 export const api = {
   initUpload: (filename: string, size: number) =>
     jsonFetch<UploadInitResponse>('/files/init', {
@@ -44,4 +60,22 @@ export const api = {
     }),
   getTask: (taskId: string) => jsonFetch<TaskOut>(`/tasks/${taskId}`),
   resultUrl: (key: string) => `${BASE}/files/raw/${key}`,
+  createAnnotation: (input: {
+    las_file_id: string;
+    label: string;
+    source: string;
+    bbox?: Record<string, number>;
+    points?: number[];
+  }) =>
+    jsonFetch<AnnotationOut>('/annotations', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  listAnnotations: (lasFileId: string) =>
+    jsonFetch<AnnotationOut[]>(`/annotations?las_file_id=${lasFileId}`),
+  exportAnnotations: (lasFileId: string) =>
+    jsonFetch<AnnotationExportOut>('/annotations/export', {
+      method: 'POST',
+      body: JSON.stringify({ las_file_id: lasFileId }),
+    }),
 };

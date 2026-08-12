@@ -3,6 +3,7 @@ import { create } from 'zustand';
 export interface UploadItem {
   id: string;
   filename: string;
+  lasFileId?: string;
   progress: number;
   status: 'uploading' | 'processing' | 'done' | 'failed';
   message: string;
