@@ -4,6 +4,7 @@ import proj4 from 'proj4';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
+import { createPortal } from 'react-dom';
 
 // Register standard projections in proj4 engine
 proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs');
@@ -1649,6 +1650,7 @@ interface PointCloudCorridorViewerProps {
   pendingResult?: { key: string; url: string; name: string; segmentId?: string } | null;
   embedded?: boolean;
   onRequestUpload?: (file: File, segmentId: string) => void;
+  treeContainerRef?: React.RefObject<HTMLDivElement | null>;
 }
 
 export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> = ({
@@ -1661,6 +1663,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   pendingResult,
   embedded,
   onRequestUpload,
+  treeContainerRef,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -1751,6 +1754,10 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   // Active Segment ID currently rendered in primary 3D window
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
   const lastUpload = useAppStore((s) => s.uploads[s.uploads.length - 1]);
+  const [treeHost, setTreeHost] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    setTreeHost(treeContainerRef?.current ?? null);
+  }, [treeContainerRef]);
 
   // Tree Barrier Analysis Core Function
   const handleRunTreeBarrierAnalysis = (radiusParam?: number) => {
@@ -4262,6 +4269,80 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     );
   };
 
+  const treeAside = (
+    <aside className={`${embedded ? 'w-full' : 'w-80'} bg-slate-900/50 backdrop-blur-2xl ${embedded ? '' : 'border-r border-white/20'} flex flex-col z-10 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] overflow-hidden`}>
+      {/* Sidebar Header & Search Bar */}
+      <div className="p-3 border-b border-white/15 space-y-2 bg-black/30 backdrop-blur-md">
+        <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
+          <span className="flex items-center gap-1.5">
+            <Globe className="w-4 h-4 text-cyan-400" />
+            <span>层级树 (省/市/线路/廊道)</span>
+          </span>
+          <span className="text-[10px] text-slate-400 font-mono">双击定位</span>
+        </div>
+
+        <div className="relative">
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="搜索省/市/线路/廊道..."
+            className="w-full bg-black/40 border border-white/15 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-400 backdrop-blur-md"
+          />
+        </div>
+      </div>
+
+      {/* Tree Navigation Container */}
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        {hierarchyData.length > 0 ? (
+          hierarchyData.map((prov) => renderTreeNode(prov))
+        ) : (
+          <div className="flex flex-col items-center justify-center h-64 text-center p-4 text-slate-400 space-y-3 font-sans">
+            <div className="p-3 bg-slate-900/80 border border-slate-700/50 rounded-2xl text-slate-400">
+              <Upload className="w-8 h-8 text-cyan-400 opacity-80 animate-bounce" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-slate-200">暂无已录入的点云数据</p>
+              <p className="text-[11px] text-slate-400 mt-1">请点击右上角【导入本地点云 (LAS/LAZ)】手动录入激光点云数据</p>
+            </div>
+            <button
+              onClick={() => setIsImportModalOpen(true)}
+              className="mt-2 text-xs px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded-xl transition-all font-mono cursor-pointer"
+            >
+              + 立即手动录入点云
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Active Segment Summary Footer Card */}
+      <div className="p-3 bg-slate-900/50 backdrop-blur-2xl border-t border-white/20 font-mono text-xs space-y-2">
+        <div className="flex items-center justify-between font-bold text-cyan-300">
+          <span>当前选定廊道指标</span>
+          <span className="text-[10px] text-emerald-400 font-normal">
+            {activeSegment ? 'RTC 加速正常' : '等待录入/选中'}
+          </span>
+        </div>
+
+        {activeSegment ? (
+          <div className="grid grid-cols-2 gap-1.5 text-[11px] bg-black/40 backdrop-blur-md p-2 rounded-xl border border-white/10">
+            <div>点云总量: <strong className="text-white">{activeSegment.pointCount.toLocaleString()}</strong></div>
+            <div>预计显存: <strong className="text-cyan-300">{activeSegment.memorySizeMB} MB</strong></div>
+            <div>起止杆塔: <strong className="text-slate-200">{activeSegment.startTower}~{activeSegment.endTower}</strong></div>
+            <div>
+              树障距: <strong className={activeSegment.hasDangerTree ? 'text-red-400 font-bold' : 'text-emerald-400'}>{activeSegment.minTreeDistance}m</strong>
+            </div>
+          </div>
+        ) : (
+          <div className="text-[11px] text-slate-400 bg-black/40 p-2 rounded-xl border border-white/10 text-center">
+            未选择点云 | 点击左侧节点或右上角导入
+          </div>
+        )}
+      </div>
+    </aside>
+  );
+
   return (
     <div className={`${embedded ? 'absolute inset-0 z-0 pl-[352px]' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
       {/* Top Cesium/Google Earth Style Global Header */}
@@ -4377,77 +4458,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       {/* Fullscreen Body */}
       <div className="flex-1 relative flex overflow-hidden">
         {/* Left Sidebar: Province / City / Line / Corridor Hierarchy Drawer */}
-        <aside className="w-80 bg-slate-900/50 backdrop-blur-2xl border-r border-white/20 flex flex-col z-10 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] overflow-hidden">
-          {/* Sidebar Header & Search Bar */}
-          <div className="p-3 border-b border-white/15 space-y-2 bg-black/30 backdrop-blur-md">
-            <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
-              <span className="flex items-center gap-1.5">
-                <Globe className="w-4 h-4 text-cyan-400" />
-                <span>层级树 (省/市/线路/廊道)</span>
-              </span>
-              <span className="text-[10px] text-slate-400 font-mono">双击定位</span>
-            </div>
-
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="搜索省/市/线路/廊道..."
-                className="w-full bg-black/40 border border-white/15 rounded-xl pl-8 pr-3 py-1.5 text-xs text-slate-100 placeholder-slate-400 focus:outline-none focus:border-cyan-400 backdrop-blur-md"
-              />
-            </div>
-          </div>
-
-          {/* Tree Navigation Container */}
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {hierarchyData.length > 0 ? (
-              hierarchyData.map((prov) => renderTreeNode(prov))
-            ) : (
-              <div className="flex flex-col items-center justify-center h-64 text-center p-4 text-slate-400 space-y-3 font-sans">
-                <div className="p-3 bg-slate-900/80 border border-slate-700/50 rounded-2xl text-slate-400">
-                  <Upload className="w-8 h-8 text-cyan-400 opacity-80 animate-bounce" />
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-slate-200">暂无已录入的点云数据</p>
-                  <p className="text-[11px] text-slate-400 mt-1">请点击右上角【导入本地点云 (LAS/LAZ)】手动录入激光点云数据</p>
-                </div>
-                <button
-                  onClick={() => setIsImportModalOpen(true)}
-                  className="mt-2 text-xs px-3 py-1.5 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 border border-cyan-500/40 rounded-xl transition-all font-mono cursor-pointer"
-                >
-                  + 立即手动录入点云
-                </button>
-              </div>
-            )}
-          </div>
-
-          {/* Active Segment Summary Footer Card */}
-          <div className="p-3 bg-slate-900/50 backdrop-blur-2xl border-t border-white/20 font-mono text-xs space-y-2">
-            <div className="flex items-center justify-between font-bold text-cyan-300">
-              <span>当前选定廊道指标</span>
-              <span className="text-[10px] text-emerald-400 font-normal">
-                {activeSegment ? 'RTC 加速正常' : '等待录入/选中'}
-              </span>
-            </div>
-
-            {activeSegment ? (
-              <div className="grid grid-cols-2 gap-1.5 text-[11px] bg-black/40 backdrop-blur-md p-2 rounded-xl border border-white/10">
-                <div>点云总量: <strong className="text-white">{activeSegment.pointCount.toLocaleString()}</strong></div>
-                <div>预计显存: <strong className="text-cyan-300">{activeSegment.memorySizeMB} MB</strong></div>
-                <div>起止杆塔: <strong className="text-slate-200">{activeSegment.startTower}~{activeSegment.endTower}</strong></div>
-                <div>
-                  树障距: <strong className={activeSegment.hasDangerTree ? 'text-red-400 font-bold' : 'text-emerald-400'}>{activeSegment.minTreeDistance}m</strong>
-                </div>
-              </div>
-            ) : (
-              <div className="text-[11px] text-slate-400 bg-black/40 p-2 rounded-xl border border-white/10 text-center">
-                未选择点云 | 点击左侧节点或右上角导入
-              </div>
-            )}
-          </div>
-        </aside>
+        {embedded ? (treeHost ? createPortal(treeAside, treeHost) : null) : treeAside}
 
         {/* Center Canvas Stage */}
         <div className="flex-1 relative bg-slate-950">

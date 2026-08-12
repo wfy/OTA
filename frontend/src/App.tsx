@@ -26,6 +26,7 @@ import { Sliders, X } from 'lucide-react';
 
 export default function App() {
   const uploadPanelRef = useRef<UploadPanelHandle>(null);
+  const treeContainerRef = useRef<HTMLDivElement | null>(null);
   const doneUpload = useAppStore((s) => s.uploads.find((u) => u.status === 'done'));
   const pendingResult = doneUpload?.resultKey
     ? { key: doneUpload.resultKey, url: api.resultUrl(doneUpload.resultKey), name: `${doneUpload.filename}_sign.las`, segmentId: doneUpload.segmentId }
@@ -197,6 +198,7 @@ export default function App() {
               isOpen
               onClose={() => {}}
               onRequestUpload={(file, segmentId) => uploadPanelRef.current?.uploadFile(file, segmentId)}
+              treeContainerRef={treeContainerRef}
               tower={tower}
               conductor={selectedConductor}
               results={results}
@@ -334,7 +336,7 @@ export default function App() {
                     : 'text-slate-400 hover:text-white'
                 }`}
               >
-                点云上传/分类
+                层级树
               </button>
               <button
                 onClick={() => setSidebarTab('params')}
@@ -352,10 +354,8 @@ export default function App() {
           {/* Sidebar Body */}
           <div className="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-slate-700/30">
             {sidebarTab === 'cloud' ? (
-              <div className="space-y-2 p-1">
-                <p className="text-[11px] text-slate-400 leading-relaxed">
-                  上传流程：点击查看器顶部「导入 LAS/LAZ」→ 选择 LAS 文件 → 确认导入 → 自动上传、分类并加载点云。
-                </p>
+              <div className="flex flex-col h-full">
+                <div ref={treeContainerRef} className="flex-1 overflow-y-auto" />
                 <UploadPanel ref={uploadPanelRef} />
               </div>
             ) : (
