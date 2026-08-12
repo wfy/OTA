@@ -5592,7 +5592,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             )}
 
             {/* Point Cloud CRS & Projection Settings */}
-            <div className="hidden space-y-2 bg-slate-900/60 backdrop-blur-md p-3 rounded-xl border border-cyan-500/30">
+            <div className="space-y-2 bg-slate-900/60 backdrop-blur-md p-3 rounded-xl border border-cyan-500/30">
               <div className="font-bold text-cyan-300 text-[11px] flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <Compass className="w-3.5 h-3.5 text-cyan-400" />
@@ -5674,7 +5674,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             </div>
 
             {/* Hierarchy Auto Recognition Form */}
-            <div className="hidden space-y-2.5 bg-slate-950/30 backdrop-blur-md p-3 rounded-xl border border-white/15">
+            <div className="space-y-2.5 bg-slate-950/30 backdrop-blur-md p-3 rounded-xl border border-white/15">
               <div className="font-bold text-cyan-300 text-[11px] flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
