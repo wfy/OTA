@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Conductor,
   Insulator,
@@ -19,12 +19,13 @@ import { ComplianceReport } from './components/ComplianceReport';
 import { AiAssistant } from './components/AiAssistant';
 import { FormulaModal } from './components/FormulaModal';
 import { PointCloudCorridorViewer } from './components/PointCloudCorridorViewer';
-import { UploadPanel } from './components/UploadPanel';
+import { UploadPanel, UploadPanelHandle } from './components/UploadPanel';
 import { api } from './api/client';
 import { useAppStore } from './store/useAppStore';
 import { Sliders, X } from 'lucide-react';
 
 export default function App() {
+  const uploadPanelRef = useRef<UploadPanelHandle>(null);
   const doneUpload = useAppStore((s) => s.uploads.find((u) => u.status === 'done'));
   const pendingResult = doneUpload?.resultKey
     ? { key: doneUpload.resultKey, url: api.resultUrl(doneUpload.resultKey), name: `${doneUpload.filename}_sign.las` }
@@ -195,6 +196,7 @@ export default function App() {
               embedded
               isOpen
               onClose={() => {}}
+              onRequestUpload={() => uploadPanelRef.current?.openFilePicker()}
               tower={tower}
               conductor={selectedConductor}
               results={results}
@@ -350,7 +352,12 @@ export default function App() {
           {/* Sidebar Body */}
           <div className="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-slate-700/30">
             {sidebarTab === 'cloud' ? (
-              <UploadPanel />
+              <div className="space-y-2 p-1">
+                <p className="text-[11px] text-slate-400 leading-relaxed">
+                  上传流程：点击查看器顶部「导入 LAS/LAZ」→ 选择 LAS 文件 → 确认导入 → 自动上传、分类并加载点云。
+                </p>
+                <UploadPanel ref={uploadPanelRef} />
+              </div>
             ) : (
             <ParamInputs
               selectedConductor={selectedConductor}

@@ -54,6 +54,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { TowerParameters, Conductor, ConditionCalcResult } from '../types';
+import { useAppStore } from '../store/useAppStore';
 import { generateCatenaryCurve } from '../utils/conductorPhysics';
 
 // Voltage Level Phase Presets for Powerline Conductors (Digital Green Valley / LiDAR3D Industry Standard)
@@ -1647,6 +1648,7 @@ interface PointCloudCorridorViewerProps {
   onClose: () => void;
   pendingResult?: { key: string; url: string; name: string } | null;
   embedded?: boolean;
+  onRequestUpload?: () => void;
 }
 
 export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> = ({
@@ -1658,6 +1660,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   onClose,
   pendingResult,
   embedded,
+  onRequestUpload,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -1747,6 +1750,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
   // Active Segment ID currently rendered in primary 3D window
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
+  const lastUpload = useAppStore((s) => s.uploads[s.uploads.length - 1]);
 
   // Tree Barrier Analysis Core Function
   const handleRunTreeBarrierAnalysis = (radiusParam?: number) => {
@@ -2767,6 +2771,10 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     handleImportPointCloud();
     setDetectionNotice(null);
   }, [importForm]);
+
+  useEffect(() => {
+    if (lastUpload?.status === 'done') setIsImportModalOpen(false);
+  }, [lastUpload?.status]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -5491,7 +5499,14 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             </button>
           </div>
 
-          <form onSubmit={handleImportPointCloud} className="space-y-3 text-xs">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (onRequestUpload) onRequestUpload();
+              else handleImportPointCloud();
+            }}
+            className="space-y-3 text-xs"
+          >
             {/* File Dropzone */}
             <div
               onClick={() => fileInputRef.current?.click()}
@@ -5745,6 +5760,19 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                 />
               </div>
             </div>
+
+            {lastUpload && (
+              <div className="space-y-1">
+                <div className="flex justify-between text-[10px] font-mono text-slate-300">
+                  <span className="truncate">{lastUpload.filename}</span>
+                  <span>{lastUpload.status}</span>
+                </div>
+                <div className="h-1 rounded bg-white/10">
+                  <div className="h-1 rounded bg-emerald-400" style={{ width: `${lastUpload.progress}%` }} />
+                </div>
+                <p className="text-[10px] text-slate-400">{lastUpload.message}</p>
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-2 pt-1 font-mono">
               <button
