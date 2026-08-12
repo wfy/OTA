@@ -12,10 +12,14 @@ export function UploadPanel() {
   const { uploads, addUpload, updateUpload } = useAppStore();
 
   async function handleFile(file: File) {
+    const tempId = `up-${Date.now()}`;
+    addUpload({ id: tempId, filename: file.name, progress: 0, status: 'uploading', message: '初始化上传' });
     setBusy(true);
+    let uploadId = tempId;
     try {
       const { upload_id } = await api.initUpload(file.name, file.size);
-      addUpload({ id: upload_id, filename: file.name, progress: 0, status: 'uploading', message: '上传中' });
+      uploadId = upload_id;
+      updateUpload(tempId, { id: uploadId, message: '上传中' });
       for (let i = 0; i < file.size; i += CHUNK) {
         const blob = file.slice(i, Math.min(i + CHUNK, file.size));
         await api.uploadChunk(upload_id, i / CHUNK, blob);
@@ -28,7 +32,8 @@ export function UploadPanel() {
       const task = await api.createTask(las_file_id);
       updateUpload(upload_id, { status: 'processing', message: '任务已提交' });
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${location.host}/ws/tasks/${task.id}`);
+      const wsBase = import.meta.env.VITE_WS_BASE ?? `${proto}://${location.host}`;
+      const ws = new WebSocket(`${wsBase}/ws/tasks/${task.id}`);
       ws.onmessage = (ev) => {
         const data = JSON.parse(ev.data);
         if (data.status === 'done') {
@@ -42,7 +47,7 @@ export function UploadPanel() {
         }
       };
     } catch (err) {
-      addUpload({ id: `err-${Date.now()}`, filename: file.name, progress: 0, status: 'failed', message: String(err) });
+      updateUpload(uploadId, { status: 'failed', message: String(err) });
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = '';
