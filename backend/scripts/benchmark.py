@@ -18,7 +18,7 @@ def main():
     src = Path(args.input)
     out = Path(args.output) if args.output else src.with_name(f"{src.stem}_sign_bench.las")
     res = classify_las(str(src), str(out), limit=args.limit)
-    report = f"""# 点云分类基准（2026-08-11）
+    report = f"""# 点云分类基准
 
 - 输入: {src}
 - 点数上限: {args.limit:,}
