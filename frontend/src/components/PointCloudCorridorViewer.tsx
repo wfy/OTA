@@ -2753,6 +2753,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   };
 
   const loadedRemoteKeysRef = useRef<Set<string>>(new Set());
+  const pendingAutoBuildRef = useRef(false);
 
   useEffect(() => {
     if (!isOpen || !pendingResult) return;
@@ -2764,12 +2765,19 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         const blob = await fetch(pendingResult.url).then((r) => r.blob());
         const file = new File([blob], pendingResult.name, { type: 'application/octet-stream' });
         await processLocalFiles([file]);
-        setDetectionNotice(null);
+        pendingAutoBuildRef.current = true;
       } catch (err) {
         setDetectionNotice(`远程点云加载失败: ${String(err)}`);
       }
     })();
   }, [isOpen, pendingResult]);
+
+  useEffect(() => {
+    if (!pendingAutoBuildRef.current || !importForm.fileName) return;
+    pendingAutoBuildRef.current = false;
+    handleImportPointCloud();
+    setDetectionNotice(null);
+  }, [importForm]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -2904,8 +2912,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   };
 
   // Import local LAS / Point cloud file handler
-  const handleImportPointCloud = (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleImportPointCloud = (e?: React.FormEvent) => {
+    e?.preventDefault();
 
     const newSegId = `seg-custom-${Date.now()}`;
     const newSegData: CorridorSegmentData = {
