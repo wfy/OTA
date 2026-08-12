@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.db import init_db
+from app.routers import annotations
 from app.routers import files
 from app.routers import tasks
 from app import ws as ws_module
@@ -27,6 +28,7 @@ app.add_middleware(
 
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
+app.include_router(annotations.router, prefix="/api/annotations", tags=["annotations"])
 app.include_router(ws_module.router)
 
 

@@ -47,3 +47,14 @@ class Task(Base):
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
+class Annotation(Base):
+    __tablename__ = "annotations"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=nid)
+    las_file_id: Mapped[str] = mapped_column(ForeignKey("las_files.id"))
+    label: Mapped[str] = mapped_column(String(32))
+    source: Mapped[str] = mapped_column(String(32), default="box")
+    bbox_json: Mapped[str] = mapped_column(Text, default="")
+    points_json: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)

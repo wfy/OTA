@@ -27,3 +27,31 @@ class TaskOut(BaseModel):
     error: str
     created_at: str
     updated_at: str
+
+
+class AnnotationCreate(BaseModel):
+    las_file_id: str
+    label: str = Field(min_length=1, max_length=32)
+    source: str = "box"
+    bbox: dict[str, float] | None = None
+    points: list[int] | None = None
+
+
+class AnnotationOut(BaseModel):
+    id: str
+    las_file_id: str
+    label: str
+    source: str
+    bbox: dict[str, float] | None = None
+    points_count: int
+    created_at: str
+
+
+class AnnotationExportRequest(BaseModel):
+    las_file_id: str
+
+
+class AnnotationExportOut(BaseModel):
+    key: str
+    url: str
+    counts: dict[str, int]
