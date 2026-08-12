@@ -63,11 +63,35 @@ def main():
         out.write_bytes(r.content)
         las = laspy.read(out)
         classes, counts = np.unique(las.classification, return_counts=True)
+        # 标注闭环冒烟：全量 bbox 标注为 vegetation，导出后校验分类
+        bbox = {
+            "minX": float(las.x.min()),
+            "minY": float(las.y.min()),
+            "minZ": float(las.z.min()),
+            "maxX": float(las.x.max()),
+            "maxY": float(las.y.max()),
+            "maxZ": float(las.z.max()),
+        }
+        r = client.post(
+            "/api/annotations",
+            json={"las_file_id": las_file_id, "label": "vegetation", "source": "box", "bbox": bbox},
+        )
+        r.raise_for_status()
+        r = client.post("/api/annotations/export", json={"las_file_id": las_file_id})
+        r.raise_for_status()
+        export = r.json()
+        labeled_path = out.with_name("labeled.las")
+        r = client.get(export["url"])
+        r.raise_for_status()
+        labeled_path.write_bytes(r.content)
+        labeled = laspy.read(labeled_path)
+        labeled_veg = int(np.sum(labeled.classification == 5))
         elapsed = time.time() - t0
         report = f"""# M1 端到端验收（2026-08-11）
 
 - 输入: {src}（{src.stat().st_size / 1024 / 1024:.1f} MB）
 - 结果: {out}（任务 {task_id}）
+- 标注闭环: 全量 bbox 标注 vegetation → 导出后 class=5 点数 {labeled_veg}（计数 {export['counts']}）
 - 总耗时: {elapsed:.1f}s（上传+分类+下载）
 - LAS classification 分布: {dict(zip(classes.tolist(), counts.tolist()))}
 - 任务 message: {task['message']}
