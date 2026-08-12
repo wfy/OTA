@@ -28,7 +28,7 @@ export default function App() {
   const uploadPanelRef = useRef<UploadPanelHandle>(null);
   const doneUpload = useAppStore((s) => s.uploads.find((u) => u.status === 'done'));
   const pendingResult = doneUpload?.resultKey
-    ? { key: doneUpload.resultKey, url: api.resultUrl(doneUpload.resultKey), name: `${doneUpload.filename}_sign.las` }
+    ? { key: doneUpload.resultKey, url: api.resultUrl(doneUpload.resultKey), name: `${doneUpload.filename}_sign.las`, segmentId: doneUpload.segmentId }
     : null;
   const [voltageLevel, setVoltageLevel] = useState<number>(220);
   const [activeTab, setActiveTab] = useState<
@@ -196,7 +196,7 @@ export default function App() {
               embedded
               isOpen
               onClose={() => {}}
-              onRequestUpload={() => uploadPanelRef.current?.openFilePicker()}
+              onRequestUpload={(file, segmentId) => uploadPanelRef.current?.uploadFile(file, segmentId)}
               tower={tower}
               conductor={selectedConductor}
               results={results}

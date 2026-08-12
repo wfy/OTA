@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle } from 'react';
 
 import { api } from '../api/client';
 import { useAppStore } from '../store/useAppStore';
@@ -6,23 +6,20 @@ import { useAppStore } from '../store/useAppStore';
 const CHUNK = 8 * 1024 * 1024;
 
 export interface UploadPanelHandle {
-  openFilePicker: () => void;
+  uploadFile: (file: File, segmentId?: string) => Promise<void>;
 }
 
 export const UploadPanel = forwardRef<UploadPanelHandle, object>(
   function UploadPanel(_, ref) {
-    const inputRef = useRef<HTMLInputElement>(null);
-    const [busy, setBusy] = useState(false);
     const { addUpload, updateUpload } = useAppStore();
 
     useImperativeHandle(ref, () => ({
-      openFilePicker: () => inputRef.current?.click(),
+      uploadFile: (file, segmentId) => handleFile(file, segmentId),
     }));
 
-    async function handleFile(file: File) {
+    async function handleFile(file: File, segmentId?: string) {
       const tempId = `up-${Date.now()}`;
-      addUpload({ id: tempId, filename: file.name, progress: 0, status: 'uploading', message: '初始化上传' });
-      setBusy(true);
+      addUpload({ id: tempId, filename: file.name, segmentId, progress: 0, status: 'uploading', message: '初始化上传' });
       let uploadId = tempId;
       try {
         const { upload_id } = await api.initUpload(file.name, file.size);
@@ -56,20 +53,9 @@ export const UploadPanel = forwardRef<UploadPanelHandle, object>(
         };
       } catch (err) {
         updateUpload(uploadId, { status: 'failed', message: String(err) });
-      } finally {
-        setBusy(false);
       }
     }
 
-    return (
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".las,.laz"
-        disabled={busy}
-        onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
-        className="hidden"
-      />
-    );
+    return null;
   }
 );

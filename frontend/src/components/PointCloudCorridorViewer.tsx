@@ -1646,9 +1646,9 @@ interface PointCloudCorridorViewerProps {
   selectedConditionId: string;
   isOpen: boolean;
   onClose: () => void;
-  pendingResult?: { key: string; url: string; name: string } | null;
+  pendingResult?: { key: string; url: string; name: string; segmentId?: string } | null;
   embedded?: boolean;
-  onRequestUpload?: () => void;
+  onRequestUpload?: (file: File, segmentId: string) => void;
 }
 
 export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> = ({
@@ -2682,6 +2682,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     setGeoParseNotice(null);
 
     const firstFile = fileArray[0];
+    pendingUploadFileRef.current = firstFile;
     const estCount = Math.max(80000, Math.round(firstFile.size / 28));
 
     // 1. Filename Heuristic Analysis (Highest precision for power grid files)
@@ -2747,6 +2748,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
   const loadedRemoteKeysRef = useRef<Set<string>>(new Set());
   const pendingAutoBuildRef = useRef(false);
+  const pendingUploadFileRef = useRef<File | null>(null);
 
   useEffect(() => {
     if (!isOpen || !pendingResult) return;
@@ -2757,8 +2759,18 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         setDetectionNotice(`正在加载远程点云: ${pendingResult.name}`);
         const blob = await fetch(pendingResult.url).then((r) => r.blob());
         const file = new File([blob], pendingResult.name, { type: 'application/octet-stream' });
+        const existingSegmentId =
+          pendingResult.segmentId && loadedPointCloudMapRef.current[pendingResult.segmentId]
+            ? pendingResult.segmentId
+            : null;
         await processLocalFiles([file]);
-        pendingAutoBuildRef.current = true;
+        if (existingSegmentId && pendingParsedDataRef.current) {
+          loadedPointCloudMapRef.current[existingSegmentId] = pendingParsedDataRef.current;
+          setActiveSegmentId(existingSegmentId);
+          setDetectionNotice(null);
+        } else {
+          pendingAutoBuildRef.current = true;
+        }
       } catch (err) {
         setDetectionNotice(`远程点云加载失败: ${String(err)}`);
       }
@@ -2768,7 +2780,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   useEffect(() => {
     if (!pendingAutoBuildRef.current || !importForm.fileName) return;
     pendingAutoBuildRef.current = false;
-    handleImportPointCloud();
+    handleImportPointCloud(undefined, true);
     setDetectionNotice(null);
   }, [importForm]);
 
@@ -2909,7 +2921,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   };
 
   // Import local LAS / Point cloud file handler
-  const handleImportPointCloud = (e?: React.FormEvent) => {
+  const handleImportPointCloud = (e?: React.FormEvent, skipUpload = false) => {
     e?.preventDefault();
 
     const newSegId = `seg-custom-${Date.now()}`;
@@ -3031,6 +3043,10 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     setActiveSegmentId(newSegId);
     setIsImportModalOpen(false);
     flyToNode(importForm.lat, importForm.lon, 250);
+    const pendingFile = pendingUploadFileRef.current;
+    if (!skipUpload && pendingFile && onRequestUpload) {
+      onRequestUpload(pendingFile, newSegId);
+    }
   };
 
   // Helper: Generate Point Cloud Buffer for Active Segment using Cesium RTC local tangent offset
@@ -4192,6 +4208,15 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           </div>
         </div>
 
+        {isSegment && lastUpload?.segmentId === node.id && lastUpload.status !== 'done' && (
+          <div className="px-2 py-1 space-y-0.5">
+            <div className="h-1 rounded bg-white/10">
+              <div className="h-1 rounded bg-emerald-400" style={{ width: `${lastUpload.progress}%` }} />
+            </div>
+            <p className="text-[9px] text-slate-400">{lastUpload.message}</p>
+          </div>
+        )}
+
         {/* Render Children under nested padding */}
         {hasChildren && isExpanded && (
           <div className="pl-3.5 ml-2 border-l border-slate-700/50 my-0.5 space-y-0.5">
@@ -4352,7 +4377,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       {/* Fullscreen Body */}
       <div className="flex-1 relative flex overflow-hidden">
         {/* Left Sidebar: Province / City / Line / Corridor Hierarchy Drawer */}
-        <aside className={`w-80 bg-slate-900/50 backdrop-blur-2xl border-r border-white/20 flex flex-col z-10 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] overflow-hidden ${embedded ? 'hidden' : ''}`}>
+        <aside className="w-80 bg-slate-900/50 backdrop-blur-2xl border-r border-white/20 flex flex-col z-10 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] overflow-hidden">
           {/* Sidebar Header & Search Bar */}
           <div className="p-3 border-b border-white/15 space-y-2 bg-black/30 backdrop-blur-md">
             <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
@@ -5499,14 +5524,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             </button>
           </div>
 
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (onRequestUpload) onRequestUpload();
-              else handleImportPointCloud();
-            }}
-            className="space-y-3 text-xs"
-          >
+          <form onSubmit={handleImportPointCloud} className="space-y-3 text-xs">
             {/* File Dropzone */}
             <div
               onClick={() => fileInputRef.current?.click()}
@@ -5760,19 +5778,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                 />
               </div>
             </div>
-
-            {lastUpload && (
-              <div className="space-y-1">
-                <div className="flex justify-between text-[10px] font-mono text-slate-300">
-                  <span className="truncate">{lastUpload.filename}</span>
-                  <span>{lastUpload.status}</span>
-                </div>
-                <div className="h-1 rounded bg-white/10">
-                  <div className="h-1 rounded bg-emerald-400" style={{ width: `${lastUpload.progress}%` }} />
-                </div>
-                <p className="text-[10px] text-slate-400">{lastUpload.message}</p>
-              </div>
-            )}
 
             <div className="flex items-center justify-end gap-2 pt-1 font-mono">
               <button
