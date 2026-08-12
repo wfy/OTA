@@ -4230,9 +4230,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   };
 
   return (
-    <div className={`${embedded ? 'absolute inset-0 z-0 pl-[352px] pt-[86px]' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
+    <div className={`${embedded ? 'absolute inset-0 z-0' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
       {/* Top Cesium/Google Earth Style Global Header */}
-      <header className="h-13 bg-slate-900/50 border-b border-white/20 backdrop-blur-2xl px-4 flex items-center justify-between z-20 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]">
+      <header className={`h-13 bg-slate-900/50 border-b border-white/20 backdrop-blur-2xl px-4 flex items-center justify-between z-20 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] ${embedded ? 'pl-[348px]' : ''}`}>
         <div className="flex items-center gap-3">
           {/* macOS window traffic light dots */}
           <div className="flex items-center gap-1.5 mr-1">
@@ -4344,7 +4344,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       {/* Fullscreen Body */}
       <div className="flex-1 relative flex overflow-hidden">
         {/* Left Sidebar: Province / City / Line / Corridor Hierarchy Drawer */}
-        <aside className="w-80 bg-slate-900/50 backdrop-blur-2xl border-r border-white/20 flex flex-col z-10 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] overflow-hidden">
+        <aside className={`w-80 bg-slate-900/50 backdrop-blur-2xl border-r border-white/20 flex flex-col z-10 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] overflow-hidden ${embedded ? 'hidden' : ''}`}>
           {/* Sidebar Header & Search Bar */}
           <div className="p-3 border-b border-white/15 space-y-2 bg-black/30 backdrop-blur-md">
             <div className="flex items-center justify-between text-xs font-bold text-cyan-300">
@@ -5592,7 +5592,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             )}
 
             {/* Point Cloud CRS & Projection Settings */}
-            <div className="space-y-2 bg-slate-900/60 backdrop-blur-md p-3 rounded-xl border border-cyan-500/30">
+            <div className="hidden space-y-2 bg-slate-900/60 backdrop-blur-md p-3 rounded-xl border border-cyan-500/30">
               <div className="font-bold text-cyan-300 text-[11px] flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <Compass className="w-3.5 h-3.5 text-cyan-400" />
@@ -5674,7 +5674,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             </div>
 
             {/* Hierarchy Auto Recognition Form */}
-            <div className="space-y-2.5 bg-slate-950/30 backdrop-blur-md p-3 rounded-xl border border-white/15">
+            <div className="hidden space-y-2.5 bg-slate-950/30 backdrop-blur-md p-3 rounded-xl border border-white/15">
               <div className="font-bold text-cyan-300 text-[11px] flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
                   <Sparkles className="w-3.5 h-3.5 text-cyan-400" />

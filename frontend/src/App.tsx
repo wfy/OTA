@@ -11,7 +11,6 @@ import { PRESET_CONDUCTORS, PRESET_INSULATORS } from './data/conductors';
 import { TYPICAL_METEOROLOGICAL_ZONES } from './data/meteorology';
 import { calculateAllConditions } from './utils/conductorPhysics';
 import { calculateInsulatorWindSwing } from './utils/insulatorPhysics';
-import { Header } from './components/Header';
 import { ParamInputs } from './components/ParamInputs';
 import { ChartsView } from './components/ChartsView';
 import { WindSwingViewer } from './components/WindSwingViewer';
@@ -23,7 +22,7 @@ import { PointCloudCorridorViewer } from './components/PointCloudCorridorViewer'
 import { UploadPanel } from './components/UploadPanel';
 import { api } from './api/client';
 import { useAppStore } from './store/useAppStore';
-import { Sliders, Table, ChevronDown, ChevronUp, X, Sparkles } from 'lucide-react';
+import { Sliders, X } from 'lucide-react';
 
 export default function App() {
   const doneUpload = useAppStore((s) => s.uploads.find((u) => u.status === 'done'));
@@ -37,27 +36,13 @@ export default function App() {
 
   // Floating Overlay Panels Visibility State
   const [showSidebar, setShowSidebar] = useState<boolean>(true);
-  const [showTable, setShowTable] = useState<boolean>(true);
-  const [showHeader, setShowHeader] = useState<boolean>(true);
   const [uiMode, setUiMode] = useState<'pinned' | 'auto-hide'>('pinned');
+  const [sidebarTab, setSidebarTab] = useState<'cloud' | 'params'>('cloud');
   const [selectedConditionId, setSelectedConditionId] = useState<string>('max-wind');
-
-  // Profile Simulation States
-  const [viewDimension, setViewDimension] = useState<'3d' | '2d'>('3d');
-  const [is2dModalOpen, setIs2dModalOpen] = useState<boolean>(false);
-  const [isIceJumping, setIsIceJumping] = useState<boolean>(false);
-  const [showAllOverlay, setShowAllOverlay] = useState<boolean>(true);
   const [formulaModalState, setFormulaModalState] = useState<{
     isOpen: boolean;
     tab: 'conductor' | 'insulator';
   }>({ isOpen: false, tab: 'conductor' });
-
-  const triggerIceJump = () => {
-    setIsIceJumping(true);
-    setTimeout(() => {
-      setIsIceJumping(false);
-    }, 1800);
-  };
 
   // Parameters State
   const [selectedConductor, setSelectedConductor] = useState<Conductor>(
@@ -266,55 +251,6 @@ export default function App() {
         )}
       </main>
 
-      {/* 2. Floating Top CAD Toolbar Header */}
-      {showHeader ? (
-        <div
-          className={`fixed top-2 left-1/2 -translate-x-1/2 z-40 max-w-6xl w-[calc(100%-1rem)] transition-all duration-300 ease-in-out ${
-            uiMode === 'auto-hide'
-              ? '-translate-y-[calc(100%-16px)] opacity-60 hover:translate-y-0 hover:opacity-100'
-              : 'translate-y-0 opacity-100'
-          }`}
-        >
-          <Header
-            voltageLevel={voltageLevel}
-            onVoltageChange={handleVoltageChange}
-            activeTab={activeTab}
-            setActiveTab={setActiveTab}
-            toggleAiAssistant={() => setIsAiOpen(!isAiOpen)}
-            isAiOpen={isAiOpen}
-            showSidebar={showSidebar}
-            setShowSidebar={setShowSidebar}
-            showTable={showTable}
-            setShowTable={setShowTable}
-            showHeader={showHeader}
-            setShowHeader={setShowHeader}
-            uiMode={uiMode}
-            setUiMode={setUiMode}
-            results={results}
-            selectedConditionId={selectedConditionId}
-            onConditionChange={setSelectedConditionId}
-            viewDimension={viewDimension}
-            onViewDimensionChange={setViewDimension}
-            onOpen2DModal={() => setIs2dModalOpen(true)}
-            onOpenFormulaModal={(tab) =>
-              setFormulaModalState({ isOpen: true, tab: tab || 'conductor' })
-            }
-            onTriggerIceJump={triggerIceJump}
-            isIceJumping={isIceJumping}
-            showAllOverlay={showAllOverlay}
-            setShowAllOverlay={setShowAllOverlay}
-          />
-        </div>
-      ) : (
-        /* Minimized Floating Top CAD Toolbar Toggle Button */
-        <button
-          onClick={() => setShowHeader(true)}
-          className="fixed top-2 left-1/2 -translate-x-1/2 z-40 px-4 py-1.5 text-xs font-semibold rounded-2xl glass-button text-cyan-300 shadow-2xl hover:bg-white/10 transition-all flex items-center gap-1.5 uppercase"
-        >
-          <ChevronDown className="w-4 h-4 text-cyan-400" />
-          <span>展开 CAD 工具栏与切换选项</span>
-        </button>
-      )}
 
       {/* 3. Floating Left Parameter Sidebar */}
       {showSidebar ? (
@@ -325,32 +261,97 @@ export default function App() {
               : 'translate-x-0 opacity-100'
           }`}
         >
-          {/* Sidebar Header */}
-          <div className="bg-slate-900/30 border-b border-white/10 p-2.5 flex items-center justify-between text-xs font-semibold backdrop-blur-xl">
-            <span className="flex items-center gap-2 uppercase tracking-wider text-[11px]">
-              <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-              <span>工程物理参数控制面板</span>
-            </span>
-            <div className="flex items-center space-x-1">
-              <button
-                onClick={() => setUiMode((prev) => (prev === 'pinned' ? 'auto-hide' : 'pinned'))}
-                className="p-1 hover:bg-slate-500/20 text-slate-400 hover:text-cyan-400 transition-colors rounded-lg border border-slate-700/30"
-                title={uiMode === 'pinned' ? '固定常显示 (点击切换为边缘自动检测)' : '边缘自动检测 (点击固定常显示)'}
+          {/* Sidebar Toolbar */}
+          <div className="bg-slate-900/30 border-b border-white/10 p-2 space-y-1.5 text-xs font-semibold backdrop-blur-xl">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-2 uppercase tracking-wider text-[11px] text-cyan-300">
+                <Sliders className="w-3.5 h-3.5 text-cyan-400" />
+                <span>主控台</span>
+              </span>
+              <div className="flex items-center space-x-1">
+                <button
+                  onClick={() => setUiMode((prev) => (prev === 'pinned' ? 'auto-hide' : 'pinned'))}
+                  className="p-1 hover:bg-slate-500/20 text-slate-400 hover:text-cyan-400 transition-colors rounded-lg border border-slate-700/30"
+                  title={uiMode === 'pinned' ? '固定常显示 (点击切换为边缘自动检测)' : '边缘自动检测 (点击固定常显示)'}
+                >
+                  <span className="text-[10px] font-mono px-1">{uiMode === 'pinned' ? '📌' : '👁️'}</span>
+                </button>
+                <button
+                  onClick={() => setShowSidebar(false)}
+                  className="p-1 hover:bg-slate-500/20 text-slate-400 hover:text-slate-100 transition-colors rounded-lg border border-slate-700/30"
+                  title="折叠侧边栏"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <select
+                value={voltageLevel}
+                onChange={(e) => handleVoltageChange(Number(e.target.value))}
+                className="bg-black/40 border border-white/15 rounded-lg px-1.5 py-1 text-[11px] text-cyan-200 focus:outline-none"
               >
-                <span className="text-[10px] font-mono px-1">{uiMode === 'pinned' ? '📌' : '👁️'}</span>
+                {[35, 110, 220, 500, 750, 1000].map((v) => (
+                  <option key={v} value={v}>{v} kV</option>
+                ))}
+              </select>
+              <button
+                onClick={() => setFormulaModalState({ isOpen: true, tab: 'conductor' })}
+                className="px-2 py-1 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-400/40"
+              >
+                公式
               </button>
               <button
-                onClick={() => setShowSidebar(false)}
-                className="p-1 hover:bg-slate-500/20 text-slate-400 hover:text-slate-100 transition-colors rounded-lg border border-slate-700/30"
-                title="折叠侧边栏"
+                onClick={() => setIsAiOpen(true)}
+                className="px-2 py-1 rounded-lg bg-fuchsia-500/20 text-fuchsia-200 border border-fuchsia-400/40"
               >
-                <X className="w-4 h-4" />
+                AI
+              </button>
+            </div>
+            <div className="flex gap-1 overflow-x-auto scrollbar-none">
+              {(['profile', 'charts', 'windswing', 'stringing', 'compliance'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setActiveTab(t)}
+                  className={`px-2 py-1 rounded-lg whitespace-nowrap ${
+                    activeTab === t
+                      ? 'bg-cyan-500/25 text-cyan-200 border border-cyan-400/50'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {t === 'profile' ? '点云' : t === 'charts' ? '图表' : t === 'windswing' ? '风偏' : t === 'stringing' ? '架线' : '合规'}
+                </button>
+              ))}
+            </div>
+            <div className="flex border-t border-white/10 pt-1.5">
+              <button
+                onClick={() => setSidebarTab('cloud')}
+                className={`flex-1 py-1 rounded-lg text-[11px] font-bold ${
+                  sidebarTab === 'cloud'
+                    ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                点云上传/分类
+              </button>
+              <button
+                onClick={() => setSidebarTab('params')}
+                className={`flex-1 py-1 rounded-lg text-[11px] font-bold ${
+                  sidebarTab === 'params'
+                    ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/40'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                工况参数
               </button>
             </div>
           </div>
 
           {/* Sidebar Body */}
           <div className="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-slate-700/30">
+            {sidebarTab === 'cloud' ? (
+              <UploadPanel />
+            ) : (
             <ParamInputs
               selectedConductor={selectedConductor}
               setSelectedConductor={setSelectedConductor}
@@ -376,7 +377,7 @@ export default function App() {
               }
               insulatorRes={insulatorRes}
             />
-            <UploadPanel />
+            )}
           </div>
         </div>
       ) : (
