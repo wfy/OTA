@@ -13,7 +13,6 @@ import { calculateAllConditions } from './utils/conductorPhysics';
 import { calculateInsulatorWindSwing } from './utils/insulatorPhysics';
 import { Header } from './components/Header';
 import { ParamInputs } from './components/ParamInputs';
-import { ProfileViewer } from './components/ProfileViewer';
 import { ChartsView } from './components/ChartsView';
 import { WindSwingViewer } from './components/WindSwingViewer';
 import { StringingTable } from './components/StringingTable';
@@ -48,7 +47,6 @@ export default function App() {
   const [is2dModalOpen, setIs2dModalOpen] = useState<boolean>(false);
   const [isIceJumping, setIsIceJumping] = useState<boolean>(false);
   const [showAllOverlay, setShowAllOverlay] = useState<boolean>(true);
-  const [isPointCloudModalOpen, setIsPointCloudModalOpen] = useState<boolean>(false);
   const [formulaModalState, setFormulaModalState] = useState<{
     isOpen: boolean;
     tab: 'conductor' | 'insulator';
@@ -208,25 +206,15 @@ export default function App() {
       <main className="absolute inset-0 z-0 w-full h-full overflow-hidden">
         {activeTab === 'profile' && (
           <div className="w-full h-full">
-            <ProfileViewer
+            <PointCloudCorridorViewer
+              embedded
+              isOpen
+              onClose={() => {}}
               tower={tower}
-              results={results}
-              obstacles={obstacles}
               conductor={selectedConductor}
-              insulator={selectedInsulator}
-              insulatorRes={insulatorRes}
-              rightInsulator={selectedRightInsulator}
-              rightInsulatorRes={rightInsulatorRes}
+              results={results}
               selectedConditionId={selectedConditionId}
-              setSelectedConditionId={setSelectedConditionId}
-              viewDimension={viewDimension}
-              setViewDimension={setViewDimension}
-              is2dModalOpen={is2dModalOpen}
-              setIs2dModalOpen={setIs2dModalOpen}
-              isIceJumping={isIceJumping}
-              triggerIceJump={triggerIceJump}
-              showAllOverlay={showAllOverlay}
-              setShowAllOverlay={setShowAllOverlay}
+              pendingResult={pendingResult}
             />
           </div>
         )}
@@ -311,7 +299,6 @@ export default function App() {
             onOpenFormulaModal={(tab) =>
               setFormulaModalState({ isOpen: true, tab: tab || 'conductor' })
             }
-            onOpenPointCloudModal={() => setIsPointCloudModalOpen(true)}
             onTriggerIceJump={triggerIceJump}
             isIceJumping={isIceJumping}
             showAllOverlay={showAllOverlay}
@@ -389,6 +376,7 @@ export default function App() {
               }
               insulatorRes={insulatorRes}
             />
+            <UploadPanel />
           </div>
         </div>
       ) : (
@@ -422,18 +410,6 @@ export default function App() {
         windCondition={conditions.find((c) => c.id === selectedConditionId)}
       />
 
-      <UploadPanel />
-
-      {/* 7. Corridor LiDAR Point Cloud & Google Earth 3D Engine Modal */}
-      <PointCloudCorridorViewer
-        isOpen={isPointCloudModalOpen}
-        onClose={() => setIsPointCloudModalOpen(false)}
-        tower={tower}
-        conductor={selectedConductor}
-        results={results}
-        selectedConditionId={selectedConditionId}
-        pendingResult={pendingResult}
-      />
     </div>
   );
 }

@@ -16,7 +16,6 @@ import {
   Compass,
   Maximize2,
   Layers,
-  Globe,
 } from 'lucide-react';
 import { ConditionCalcResult } from '../types';
 
@@ -194,19 +193,6 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            {/* Point Cloud / Google Earth Modal Trigger */}
-            {onOpenPointCloudModal && (
-              <button
-                id="btn-toggle-pointcloud"
-                onClick={onOpenPointCloudModal}
-                className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border transition-all text-xs font-medium bg-cyan-500/20 hover:bg-cyan-500/35 border-cyan-400/40 text-cyan-200 cursor-pointer shadow-sm shadow-cyan-500/10"
-                title="打开廊道激光点云 (LiDAR) 分段渲染与 Google Earth 3D 引擎"
-              >
-                <Globe className="w-3.5 h-3.5 text-cyan-300 animate-pulse" />
-                <span className="hidden sm:inline">点云/Google Earth</span>
-              </button>
-            )}
-
             {/* Minimize Header */}
             <button
               onClick={() => setShowHeader(false)}
@@ -358,5 +344,3 @@ export const Header: React.FC<HeaderProps> = ({
     </header>
   );
 };
-
-

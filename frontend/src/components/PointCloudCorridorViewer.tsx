@@ -1607,19 +1607,6 @@ async function reverseGeocodeOnline(lat: number, lon: number): Promise<{ provinc
   return {};
 }
 
-// ASPRS LAS Classification Standards
-export const LAS_CLASSIFICATIONS = [
-  { id: 1, name: '未分类 (Unclassified)', color: '#94a3b8', defaultVisible: true },
-  { id: 2, name: '地面 (Ground)', color: '#854d0e', defaultVisible: true },
-  { id: 3, name: '低矮植被 (Low Veg)', color: '#22c55e', defaultVisible: true },
-  { id: 4, name: '中等植被 (Medium Veg)', color: '#16a34a', defaultVisible: true },
-  { id: 5, name: '高大树木 (High Trees)', color: '#15803d', defaultVisible: true },
-  { id: 6, name: '建筑物 (Buildings)', color: '#ea580c', defaultVisible: true },
-  { id: 8, name: '🚨 树障危险点 (Tree Hazard)', color: '#ef4444', defaultVisible: true },
-  { id: 14, name: '电力线/导地线 (Powerlines)', color: '#06b6d4', defaultVisible: true },
-  { id: 15, name: '杆塔主体 (Towers)', color: '#f59e0b', defaultVisible: true },
-  { id: 16, name: '⚡ 绝缘子串 (Insulators)', color: '#d946ef', defaultVisible: true },
-];
 
 export interface CorridorSegmentData {
   id: string;
@@ -1659,6 +1646,7 @@ interface PointCloudCorridorViewerProps {
   isOpen: boolean;
   onClose: () => void;
   pendingResult?: { key: string; url: string; name: string } | null;
+  embedded?: boolean;
 }
 
 export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> = ({
@@ -1669,6 +1657,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   isOpen,
   onClose,
   pendingResult,
+  embedded,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
@@ -1680,7 +1669,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
 
   // View & Render Engine Settings
-  const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium' | 'three'>('potree');
+  const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium'>('potree');
   const [pointBudget, setPointBudget] = useState<number>(1000000); // Max 1,000,000 points budget
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
   const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('circle');
@@ -4106,7 +4095,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     };
   }, [pickingTarget, wizardState, activeCanvasMode, selectedWirePreset, brushTargetClass, multiWireTempStartPoint, measureTempPoint, isShiftPressed]);
 
-  if (!isOpen) return null;
+  if (!isOpen && !embedded) return null;
 
   // Recursive Tree Node Renderer for Province -> City -> Line -> Segment
   const renderTreeNode = (node: HierarchyNode) => {
@@ -4241,7 +4230,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   };
 
   return (
-    <div className="fixed inset-0 z-[120] flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden animate-fade-in">
+    <div className={`${embedded ? 'absolute inset-0 z-0 pl-[352px] pt-[86px]' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
       {/* Top Cesium/Google Earth Style Global Header */}
       <header className="h-13 bg-slate-900/50 border-b border-white/20 backdrop-blur-2xl px-4 flex items-center justify-between z-20 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]">
         <div className="flex items-center gap-3">
@@ -4340,13 +4329,15 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             <span>导入 LAS/LAZ</span>
           </button>
 
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-all cursor-pointer"
-            title="退出全屏 Google Earth"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          {!embedded && (
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-white/10 transition-all cursor-pointer"
+              title="退出全屏 Google Earth"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          )}
         </div>
       </header>
 
@@ -4888,7 +4879,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
               {/* Render Engine Selector */}
               <div className="space-y-1.5">
                 <span className="text-[11px] text-slate-400 font-bold block">1. 三维渲染引擎:</span>
-                <div className="grid grid-cols-3 gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+                <div className="grid grid-cols-2 gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
                   <button
                     onClick={() => setRenderEngine('potree')}
                     className={`py-1.5 rounded-lg text-center font-bold cursor-pointer transition-all ${
@@ -4908,16 +4899,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                     }`}
                   >
                     Cesium 地球
-                  </button>
-                  <button
-                    onClick={() => setRenderEngine('three')}
-                    className={`py-1.5 rounded-lg text-center font-bold cursor-pointer transition-all ${
-                      renderEngine === 'three'
-                        ? 'bg-amber-600 text-slate-950 font-bold shadow-md border border-amber-300'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    极速 WebGL
                   </button>
                 </div>
               </div>
@@ -5465,38 +5446,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
 
 
-          {/* Bottom ASPRS Classification Legend Filter Bar */}
+          {/* Bottom Toolbar */}
           <div className="absolute bottom-3 left-4 right-4 bg-slate-900/50 backdrop-blur-2xl p-2.5 rounded-2xl border border-white/20 flex flex-wrap items-center justify-between gap-2 text-xs font-mono shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] z-20">
-            <div className="flex items-center gap-3">
-              <span className="text-slate-300 font-bold flex items-center gap-1">
-                <Layers className="w-3.5 h-3.5 text-cyan-400" />
-                <span>ASPRS 点云分类筛选:</span>
-              </span>
-              <div className="flex flex-wrap items-center gap-2 text-[11px]">
-                {LAS_CLASSIFICATIONS.map((c) => {
-                  const isVis = visibleClasses.includes(c.id);
-                  return (
-                    <button
-                      key={c.id}
-                      onClick={() => {
-                        setVisibleClasses((prev) =>
-                          prev.includes(c.id) ? prev.filter((i) => i !== c.id) : [...prev, c.id]
-                        );
-                      }}
-                      className={`flex items-center gap-1 px-2 py-0.5 rounded-lg border transition-all cursor-pointer ${
-                        isVis
-                          ? 'bg-white/10 border-white/25 text-slate-100'
-                          : 'opacity-40 bg-black/40 border-transparent text-slate-500'
-                      }`}
-                    >
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: c.color }} />
-                      <span>{c.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
             <div className="flex items-center gap-3 text-[11px] text-slate-300">
               <label className="flex items-center gap-1 cursor-pointer">
                 <input
