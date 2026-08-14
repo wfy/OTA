@@ -2,6 +2,9 @@
 chcp 65001 >nul
 cd /d "%~dp0"
 
+echo [OTA] checking ports 3000/8000 ...
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0start-check.ps1"
+
 echo [OTA] starting backend on http://127.0.0.1:8000 ...
 start "OTA-Backend" cmd /k "cd /d %~dp0backend && .venv\Scripts\python.exe -m uvicorn app.main:app --port 8000"
 
