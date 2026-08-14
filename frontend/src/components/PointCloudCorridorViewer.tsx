@@ -5247,14 +5247,14 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                 <span className="text-[11px] text-slate-400 font-bold block">1. 三维渲染引擎:</span>
                 <div className="grid grid-cols-3 gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
                   <button
-                    onClick={() => setRenderEngine('potree_core')}
+                    onClick={() => setRenderEngine('potree')}
                     className={`py-1.5 rounded-lg text-center font-bold cursor-pointer transition-all ${
-                      renderEngine === 'potree_core'
+                      renderEngine === 'potree'
                         ? 'bg-teal-600 text-white shadow-md border border-teal-400'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    Potree Core
+                    Potree
                   </button>
                   <button
                     onClick={() => setRenderEngine('cesium')}
