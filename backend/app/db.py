@@ -33,6 +33,14 @@ def init_db():
                             "ADD COLUMN result_bin_key VARCHAR(512) DEFAULT ''"
                         )
                     )
+            if "result_potree_dir" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE tasks "
+                            "ADD COLUMN result_potree_dir VARCHAR(512) DEFAULT ''"
+                        )
+                    )
 
 
 def get_db():

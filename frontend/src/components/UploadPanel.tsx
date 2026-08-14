@@ -48,6 +48,7 @@ export const UploadPanel = forwardRef<UploadPanelHandle, object>(
               message: '分类完成',
               resultKey: data.result,
               resultBinKey: data.result_bin,
+              potreeDir: data.potree_dir,
             });
             ws.close();
           } else if (data.status === 'failed') {

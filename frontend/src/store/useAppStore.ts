@@ -10,6 +10,7 @@ export interface UploadItem {
   message: string;
   resultKey?: string;
   resultBinKey?: string;
+  potreeDir?: string;
 }
 
 interface AppState {

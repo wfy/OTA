@@ -23,6 +23,7 @@ export interface TaskOut {
   message: string;
   result_las_key: string;
   result_bin_key?: string;
+  result_potree_dir?: string;
   error: string;
 }
 
@@ -69,6 +70,7 @@ export const api = {
     }),
   getTask: (taskId: string) => jsonFetch<TaskOut>(`/tasks/${taskId}`),
   resultUrl: (key: string) => `${BASE}/files/raw/${key}`,
+  potreeBaseUrl: (dir: string) => `${BASE}/potree/${dir}/`,
   createAnnotation: (input: {
     las_file_id: string;
     label: string;

@@ -35,6 +35,7 @@ export default function App() {
           url: api.resultUrl(doneUpload.resultBinKey),
           name: `${doneUpload.filename}.otabin`,
           segmentId: doneUpload.segmentId,
+          potreeBaseUrl: doneUpload.potreeDir ? api.potreeBaseUrl(doneUpload.potreeDir) : undefined,
         }
       : doneUpload.resultKey
         ? {
@@ -42,6 +43,7 @@ export default function App() {
             url: api.resultUrl(doneUpload.resultKey),
             name: `${doneUpload.filename}_sign.las`,
             segmentId: doneUpload.segmentId,
+            potreeBaseUrl: doneUpload.potreeDir ? api.potreeBaseUrl(doneUpload.potreeDir) : undefined,
           }
         : null
     : null;

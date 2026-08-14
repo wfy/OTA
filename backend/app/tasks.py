@@ -9,8 +9,9 @@ from sqlalchemy.orm import Session
 from app.models import LasFile, Task, TaskStatus
 # from app.pipeline.classify import classify_las  # TODO: 接入自研分类算法后恢复
 from app.pipeline.otab import write_otab
+from app.pipeline.potree import convert_to_potree
 # from app.pipeline.preprocess import preprocess_las  # TODO: 接入自研分类算法后恢复
-from app.storage import Storage
+from app.storage import FALLBACK_DIR, Storage
 from app.ws import hub
 
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -65,8 +66,19 @@ def process_las_task(self, task_id: str):
                 bin_key = storage.save_result(
                     f"result/{task_id}_{bin_path.name}", bin_path.read_bytes()
                 )
+                set_state(92, "Potree ??")
+                potree_dir = ""
+                potree_error = ""
+                try:
+                    potree_dir_path = Path(FALLBACK_DIR) / "potree" / task_id
+                    convert_to_potree(str(out_path), potree_dir_path)
+                    potree_dir = task_id
+                except Exception as exc:
+                    potree_dir = ""
+                    potree_error = str(exc)
                 task.result_las_key = result_key
                 task.result_bin_key = bin_key
+                task.result_potree_dir = potree_dir
                 task.status = TaskStatus.DONE
                 task.progress = 100
                 task.message = "上传完成（已跳过预处理/分类，待接入自研算法）"
@@ -78,6 +90,7 @@ def process_las_task(self, task_id: str):
                         "status": "done",
                         "result": result_key,
                         "result_bin": bin_key,
+                        "potree_dir": potree_dir,
                     },
                 )
         except MemoryError:

@@ -25,6 +25,7 @@ class TaskOut(BaseModel):
     message: str
     result_las_key: str
     result_bin_key: str = ""
+    result_potree_dir: str = ""
     error: str
     created_at: str
     updated_at: str

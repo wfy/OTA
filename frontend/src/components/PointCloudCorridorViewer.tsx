@@ -8,6 +8,12 @@ import { createPortal } from 'react-dom';
 import type { ParsedPointCloudData } from '../workers/pointCloudParser';
 import type { OctreeData } from '../workers/octreeBuilder';
 import { OctreeLODRenderer } from '../renderers/OctreeLODRenderer';
+import {
+  Potree,
+  PointColorType,
+  PointSizeType,
+  PointShape as PotreeShape,
+} from 'potree-core';
 
 // Parse point cloud data in a Web Worker so the main thread never blocks.
 // Falls back to the legacy in-thread parser if workers are unavailable.
@@ -1727,7 +1733,13 @@ interface PointCloudCorridorViewerProps {
   selectedConditionId: string;
   isOpen: boolean;
   onClose: () => void;
-  pendingResult?: { key: string; url: string; name: string; segmentId?: string } | null;
+  pendingResult?: {
+    key: string;
+    url: string;
+    name: string;
+    segmentId?: string;
+    potreeBaseUrl?: string;
+  } | null;
   embedded?: boolean;
   onRequestUpload?: (file: File, segmentId: string) => void;
   treeHost?: HTMLElement | null;
@@ -1755,9 +1767,13 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const pointCloudMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
   const octreeLODRendererRef = useRef<OctreeLODRenderer | null>(null);
+  const potreeCoreRef = useRef<Potree | null>(null);
+  const potreeCloudRef = useRef<any>(null);
 
   // View & Render Engine Settings
-  const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium' | 'octree'>('octree');
+  const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium' | 'octree' | 'potree_core'>(
+    'potree_core'
+  );
   const [pointBudget, setPointBudget] = useState<number>(1000000); // 默认 100 万点预算（减少 LOD 预算截断）
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
   const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('circle');
@@ -2927,6 +2943,55 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
   const activeCondition = results.find((r) => r.conditionId === selectedConditionId) || results[0];
 
+  const createPickingProxy = (rawPositions: Float32Array, total: number) => {
+    const proxyGeom = new THREE.BufferGeometry();
+    proxyGeom.setAttribute('position', new THREE.BufferAttribute(rawPositions, 3));
+    const targetBudget = Math.min(total, pointBudget);
+    const stride = Math.max(1, Math.floor(total / Math.max(1, targetBudget)));
+    const count = Math.ceil(total / stride);
+    const indices = new Uint32Array(count);
+    for (let i = 0, k = 0; i < total && k < count; i += stride, k++) indices[k] = i;
+    proxyGeom.setIndex(new THREE.BufferAttribute(indices, 1));
+    proxyGeom.setDrawRange(0, count);
+    const proxy = new THREE.Points(proxyGeom, new THREE.PointsMaterial({ size: 0.01 }));
+    proxy.visible = false;
+    return { proxyGeom, proxy };
+  };
+
+  const applyPotreeCoreStyle = () => {
+    const pco = potreeCloudRef.current;
+    const potree = potreeCoreRef.current;
+    if (!pco || !potree) return;
+    const material = pco.material;
+    material.size = pointSize;
+    material.pointSizeType = PointSizeType.ATTENUATED;
+    material.shape = pointShape === 'square' ? PotreeShape.SQUARE : PotreeShape.CIRCLE;
+    const modeMap: Record<string, PointColorType> = {
+      rgb: PointColorType.RGB,
+      class: PointColorType.CLASSIFICATION,
+      height: PointColorType.HEIGHT,
+      intensity: PointColorType.INTENSITY,
+      power_highlight: PointColorType.CLASSIFICATION,
+      danger: PointColorType.CLASSIFICATION,
+    };
+    material.pointColorType = modeMap[colorMode] ?? PointColorType.CLASSIFICATION;
+    const cls: Record<string, THREE.Vector4> = {
+      DEFAULT: new THREE.Vector4(1, 1, 1, 1),
+    };
+    for (let c = 0; c < 32; c++) {
+      const col = CESIUM_CLASS_COLORS[c] || CESIUM_CLASS_COLORS[1];
+      const visible = visibleClasses.includes(c);
+      cls[String(c)] = new THREE.Vector4(col.r, col.g, col.b, visible ? 1 : 0);
+    }
+    if (colorMode === 'power_highlight') {
+      cls['14'] = new THREE.Vector4(0, 0.949, 1, 1);
+      cls['15'] = new THREE.Vector4(1, 0.718, 0, 1);
+      cls['16'] = new THREE.Vector4(0.851, 0.275, 0.937, 1);
+    }
+    material.classification = cls;
+    potree.pointBudget = pointBudget;
+  };
+
   // Helper: Camera flyTo animation to target lat/lon/alt position
   const flyToNode = (lat: number, lon: number, alt: number) => {
     if (!cameraRef.current || !controlsRef.current) return;
@@ -3524,6 +3589,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       if (renderEngine === 'octree') {
         octreeLODRendererRef.current?.update(camera, height);
       }
+      if (renderEngine === 'potree_core' && potreeCloudRef.current) {
+        potreeCoreRef.current?.updatePointClouds([potreeCloudRef.current], camera, renderer);
+      }
       renderer.render(scene, camera);
     };
 
@@ -3568,6 +3636,15 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       document.body.classList.remove('ota-interacting');
       octreeLODRendererRef.current?.dispose();
       octreeLODRendererRef.current = null;
+      if (potreeCloudRef.current) {
+        try {
+          potreeCloudRef.current.dispose();
+        } catch {
+          // ignore
+        }
+        potreeCloudRef.current = null;
+      }
+      potreeCoreRef.current = null;
       renderer.dispose();
     };
   }, [isOpen, activeSegment?.id, renderEngine]);
@@ -3589,6 +3666,15 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     }
     octreeLODRendererRef.current?.dispose();
     octreeLODRendererRef.current = null;
+    if (potreeCloudRef.current) {
+      try {
+        potreeCloudRef.current.dispose();
+      } catch {
+        // ignore
+      }
+      potreeCloudRef.current = null;
+    }
+    potreeCoreRef.current = null;
 
     let rawPositions: Float32Array;
     let rawClassIds: Uint8Array;
@@ -3657,6 +3743,40 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       return;
     }
 
+    if (renderEngine === 'potree_core') {
+      const { proxyGeom, proxy } = createPickingProxy(rawPositions, total);
+      geometryRef.current = proxyGeom;
+      pointCloudMeshRef.current = proxy;
+      pointCloudMaterialRef.current = null;
+      if (!pendingResult?.potreeBaseUrl) {
+        setRenderEngine(realData?.octree ? 'octree' : 'potree');
+        return;
+      }
+      const base = pendingResult.potreeBaseUrl;
+      const potree = new Potree();
+      potreeCoreRef.current = potree;
+      potree.pointBudget = pointBudget;
+      (async () => {
+        try {
+          const pco = await potree.loadPointCloud(
+            'metadata.json',
+            ({
+              getUrl: (url: string) => `${base}${url}`,
+              fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
+            }) as any
+          );
+          potreeCloudRef.current = pco;
+          scene.add(pco);
+          applyPotreeCoreStyle();
+          controlsRef.current?.dispatchEvent({ type: 'change' });
+        } catch (err) {
+          console.warn('Potree core load failed:', err);
+          setRenderEngine(realData?.octree ? 'octree' : 'potree');
+        }
+      })();
+      return;
+    }
+
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(rawPositions, 3));
     geometry.setAttribute(
@@ -3692,13 +3812,17 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       const centerY = spanZ / 3;
       controlsRef.current.target.set(0, centerY, 0);
     }
-  }, [isOpen, activeSegment?.id, renderEngine, dataRevision]);
+  }, [isOpen, activeSegment?.id, renderEngine, dataRevision, pendingResult?.potreeBaseUrl]);
 
   // Display settings only update shader uniforms/LUT and the sampling index buffer.
   useEffect(() => {
     if (!isOpen || renderEngine === 'cesium') return;
     if (renderEngine === 'octree') {
       octreeLODRendererRef.current?.setBudget(pointBudget);
+    }
+    if (renderEngine === 'potree_core') {
+      applyPotreeCoreStyle();
+      return;
     }
     const material = pointCloudMaterialRef.current;
     const geometry = geometryRef.current;
@@ -5113,14 +5237,14 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                 <span className="text-[11px] text-slate-400 font-bold block">1. 三维渲染引擎:</span>
                 <div className="grid grid-cols-3 gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
                   <button
-                    onClick={() => setRenderEngine('potree')}
+                    onClick={() => setRenderEngine('potree_core')}
                     className={`py-1.5 rounded-lg text-center font-bold cursor-pointer transition-all ${
-                      renderEngine === 'potree'
+                      renderEngine === 'potree_core'
                         ? 'bg-teal-600 text-white shadow-md border border-teal-400'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    Potree LOD
+                    Potree Core
                   </button>
                   <button
                     onClick={() => setRenderEngine('cesium')}

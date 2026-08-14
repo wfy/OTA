@@ -1,5 +1,6 @@
 import os
 import shutil
+from pathlib import Path
 
 os.environ["CELERY_TASK_ALWAYS_EAGER"] = "1"
 os.environ["DATABASE_URL"] = "sqlite:///data/test_tasks.db"
@@ -52,4 +53,9 @@ def test_process_las_task(tmp_path):
         assert task.progress == 100
         assert task.result_las_key.startswith("result/")
         assert task.result_bin_key.startswith("result/")
+        assert task.result_potree_dir == task_id
+        potree_meta = (
+            Path(os.environ["MINIO_FALLBACK_DIR"]) / "potree" / task_id / "metadata.json"
+        )
+        assert potree_meta.exists(), "PotreeConverter 未生成 metadata.json"
     shutil.rmtree(os.environ["MINIO_FALLBACK_DIR"], ignore_errors=True)

@@ -45,6 +45,7 @@ class Task(Base):
     message: Mapped[str] = mapped_column(Text, default="")
     result_las_key: Mapped[str] = mapped_column(String(512), default="")
     result_bin_key: Mapped[str] = mapped_column(String(512), default="")
+    result_potree_dir: Mapped[str] = mapped_column(String(512), default="")
     error: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
