@@ -1758,7 +1758,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
   // View & Render Engine Settings
   const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium' | 'octree'>('octree');
-  const [pointBudget, setPointBudget] = useState<number>(400000); // 默认 40 万点预算（性能优先）
+  const [pointBudget, setPointBudget] = useState<number>(1000000); // 默认 100 万点预算（减少 LOD 预算截断）
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
   const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('circle');
   const [useRTC, setUseRTC] = useState<boolean>(true); // Cesium RTC Relative-to-Center
@@ -3522,7 +3522,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       if (!needsRender && !isPatrolling) return;
       needsRender = false;
       if (renderEngine === 'octree') {
-        octreeLODRendererRef.current?.preloadStep(24);
         octreeLODRendererRef.current?.update(camera, height);
       }
       renderer.render(scene, camera);
@@ -3636,6 +3635,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         material,
         pointBudget
       );
+      octreeLODRendererRef.current.preloadAll();
       controlsRef.current?.dispatchEvent({ type: 'change' });
 
       // Hidden picking proxy: full positions + budget-sampled index, so the

@@ -20,29 +20,31 @@ export class OctreeLODRenderer {
   private material: THREE.Material;
   private meshes = new Map<number, CachedNode>();
   private budget: number;
-  private screenThreshold = 96;
+  private screenThreshold = 48;
   private maxCached = 512;
   private frame = 0;
   private preloaded = false;
-  readonly lastStats = { visibleNodes: 0, drawnPoints: 0, cachedNodes: 0 };
+  readonly lastStats: Record<string, number> = {
+    visibleNodes: 0,
+    drawnPoints: 0,
+    cachedNodes: 0,
+    totalNodes: 0,
+  };
   private updateMs = 0;
 
   /**
-   * Pre-create node meshes in small batches so camera movement never triggers
-   * GPU buffer creation (the main source of rotation stutter).
-   * Returns true when all nodes are preloaded.
+   * Create all node meshes up front so camera movement never triggers GPU
+   * buffer creation (the main source of rotation stutter).
    */
-  preloadStep(limit = 24): boolean {
-    if (this.preloaded) return true;
-    let created = 0;
+  preloadAll() {
+    if (this.preloaded) return;
     for (const node of this.octree.nodes) {
-      if (this.meshes.has(node.id)) continue;
-      this.meshes.set(node.id, this.createMesh(node));
-      created++;
-      if (created >= limit) return false;
+      if (!this.meshes.has(node.id)) {
+        this.meshes.set(node.id, this.createMesh(node));
+      }
     }
     this.preloaded = true;
-    return true;
+    this.lastStats.cachedNodes = this.meshes.size;
   }
 
   private tmpFrustum = new THREE.Frustum();
@@ -60,6 +62,7 @@ export class OctreeLODRenderer {
     this.octree = octree;
     this.material = material;
     this.budget = budget;
+    this.lastStats.totalNodes = octree.nodes.length;
   }
 
   setBudget(budget: number) {

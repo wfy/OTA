@@ -34,8 +34,8 @@ export interface OctreeBuildOptions {
   maxDepth?: number;
 }
 
-const DEFAULT_MAX_POINTS = 20000;
-const DEFAULT_MAX_DEPTH = 8;
+const DEFAULT_MAX_POINTS = 8000;
+const DEFAULT_MAX_DEPTH = 10;
 
 export function buildOctree(
   positions: Float32Array,
