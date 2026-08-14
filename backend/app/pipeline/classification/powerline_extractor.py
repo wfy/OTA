@@ -113,7 +113,15 @@ def extract_and_track_powerlines(points: np.ndarray,
         sample_high_pts = high_pts[sample_indices]
         
         high_tree = cKDTree(high_pts.astype(np.float32))
-        sample_neighbors_list = high_tree.query_ball_point(sample_high_pts, r=2.0)
+        # Memory guard: first count neighbors only, then materialize lists for
+        # samples that pass the threshold. query_ball_point without return_length
+        # builds Python lists for every query point, which explodes on dense
+        # vegetation (300w+ points).
+        sample_counts = high_tree.query_ball_point(sample_high_pts, r=2.0, return_length=True)
+        keep_sample = sample_counts >= 4
+        sample_high_pts_keep = sample_high_pts[keep_sample]
+        sample_indices_keep = sample_indices[keep_sample]
+        sample_neighbors_list = high_tree.query_ball_point(sample_high_pts_keep, r=2.0)
         
         for idx_in_sample, neighbors in enumerate(sample_neighbors_list):
             if len(neighbors) >= 4:
@@ -124,7 +132,7 @@ def extract_and_track_powerlines(points: np.ndarray,
                 if l1 > 0:
                     linearity = (l1 - l2) / l1
                     v1 = evecs[:, 2]
-                    orig_high_idx = sample_indices[idx_in_sample]
+                    orig_high_idx = sample_indices_keep[idx_in_sample]
                     is_arm = high_is_near_arm[orig_high_idx]
                     
                     if not high_is_tower[orig_high_idx]:

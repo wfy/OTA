@@ -23,7 +23,11 @@ def classify_las(input_path: str, output_path: str, limit: int | None = None) ->
             limit,
         )
         las = las[idx]
-    points = np.vstack((las.x, las.y, las.z)).T
+    xs = np.asarray(las.x, dtype=np.float32)
+    ys = np.asarray(las.y, dtype=np.float32)
+    zs = np.asarray(las.z, dtype=np.float32)
+    points = np.column_stack((xs, ys, zs))
+    del xs, ys, zs
     is_ground, ground_idx, off_ground_idx, off_ground_pts, rel_z = separate_ground(points)
     is_tower, is_tower_arm, is_near_tower_high_arm, tower_infos = detect_towers(
         off_ground_pts, rel_z, off_ground_idx

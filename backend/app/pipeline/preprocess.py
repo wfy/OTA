@@ -38,7 +38,11 @@ def _preprocess_geometric(input_path: str, output_path: str) -> dict:
     from app.pipeline.classification.ground_separator import separate_ground
 
     las = laspy.read(input_path)
-    points = np.vstack((las.x, las.y, las.z)).T
+    points = np.column_stack((
+        np.asarray(las.x, dtype=np.float32),
+        np.asarray(las.y, dtype=np.float32),
+        np.asarray(las.z, dtype=np.float32),
+    ))
     is_ground, ground_idx, _, _, _ = separate_ground(points)
     las.classification = np.where(is_ground, 2, 0).astype(np.uint8)
     las.write(output_path)

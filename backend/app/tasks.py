@@ -78,6 +78,13 @@ def process_las_task(self, task_id: str):
                         "result_bin": bin_key,
                     },
                 )
+        except MemoryError:
+            task.status = TaskStatus.FAILED
+            task.error = "点云过大，后端内存不足（MemoryError）。建议拆分文件或减少单次处理点数。"
+            db.commit()
+            hub.notify(task_id, {"status": "failed", "error": task.error})
+            if celery_app.conf.task_always_eager:
+                raise
         except Exception as exc:
             task.status = TaskStatus.FAILED
             task.error = str(exc)
