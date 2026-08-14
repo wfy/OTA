@@ -7,9 +7,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from app.models import LasFile, Task, TaskStatus
-from app.pipeline.classify import classify_las
+# from app.pipeline.classify import classify_las  # TODO: 接入自研分类算法后恢复
 from app.pipeline.otab import write_otab
-from app.pipeline.preprocess import preprocess_las
+# from app.pipeline.preprocess import preprocess_las  # TODO: 接入自研分类算法后恢复
 from app.storage import Storage
 from app.ws import hub
 
@@ -50,10 +50,12 @@ def process_las_task(self, task_id: str):
                 in_path = Path(tmp) / las.filename
                 out_path = Path(tmp) / f"{in_path.stem}_sign.las"
                 in_path.write_bytes(raw.getvalue())
-                set_state(20, "预处理")
-                preprocess_las(str(in_path), str(out_path))
-                set_state(50, "分类推理")
-                res = classify_las(str(in_path), str(out_path))
+                # TODO: 自研分类算法接入后恢复预处理与分类
+                # set_state(20, "预处理")
+                # preprocess_las(str(in_path), str(out_path))
+                # set_state(50, "分类推理")
+                # res = classify_las(str(in_path), str(out_path))
+                out_path.write_bytes(in_path.read_bytes())
                 set_state(90, "结果写回")
                 result_key = storage.save_result(
                     f"result/{task_id}_{out_path.name}", out_path.read_bytes()
@@ -67,7 +69,7 @@ def process_las_task(self, task_id: str):
                 task.result_bin_key = bin_key
                 task.status = TaskStatus.DONE
                 task.progress = 100
-                task.message = f"分类完成 {res}"
+                task.message = "上传完成（已跳过预处理/分类，待接入自研算法）"
                 db.commit()
                 hub.notify(
                     task_id,
