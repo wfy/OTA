@@ -28,8 +28,22 @@ export default function App() {
   const uploadPanelRef = useRef<UploadPanelHandle>(null);
   const [treeHost, setTreeHost] = useState<HTMLDivElement | null>(null);
   const doneUpload = useAppStore((s) => s.uploads.find((u) => u.status === 'done'));
-  const pendingResult = doneUpload?.resultKey
-    ? { key: doneUpload.resultKey, url: api.resultUrl(doneUpload.resultKey), name: `${doneUpload.filename}_sign.las`, segmentId: doneUpload.segmentId }
+  const pendingResult = doneUpload
+    ? doneUpload.resultBinKey
+      ? {
+          key: doneUpload.resultBinKey,
+          url: api.resultUrl(doneUpload.resultBinKey),
+          name: `${doneUpload.filename}.otabin`,
+          segmentId: doneUpload.segmentId,
+        }
+      : doneUpload.resultKey
+        ? {
+            key: doneUpload.resultKey,
+            url: api.resultUrl(doneUpload.resultKey),
+            name: `${doneUpload.filename}_sign.las`,
+            segmentId: doneUpload.segmentId,
+          }
+        : null
     : null;
   const [voltageLevel, setVoltageLevel] = useState<number>(220);
   const [activeTab, setActiveTab] = useState<

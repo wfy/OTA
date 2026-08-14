@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models import LasFile, Task, TaskStatus
 from app.pipeline.classify import classify_las
+from app.pipeline.otab import write_otab
 from app.pipeline.preprocess import preprocess_las
 from app.storage import Storage
 from app.ws import hub
@@ -57,13 +58,25 @@ def process_las_task(self, task_id: str):
                 result_key = storage.save_result(
                     f"result/{task_id}_{out_path.name}", out_path.read_bytes()
                 )
+                bin_path = Path(tmp) / f"{in_path.stem}.otabin"
+                write_otab(str(out_path), str(bin_path))
+                bin_key = storage.save_result(
+                    f"result/{task_id}_{bin_path.name}", bin_path.read_bytes()
+                )
                 task.result_las_key = result_key
+                task.result_bin_key = bin_key
                 task.status = TaskStatus.DONE
                 task.progress = 100
                 task.message = f"分类完成 {res}"
                 db.commit()
                 hub.notify(
-                    task_id, {"progress": 100, "status": "done", "result": result_key}
+                    task_id,
+                    {
+                        "progress": 100,
+                        "status": "done",
+                        "result": result_key,
+                        "result_bin": bin_key,
+                    },
                 )
         except Exception as exc:
             task.status = TaskStatus.FAILED

@@ -18,6 +18,7 @@ def to_out(t: Task) -> TaskOut:
         progress=t.progress,
         message=t.message,
         result_las_key=t.result_las_key,
+        result_bin_key=t.result_bin_key,
         error=t.error,
         created_at=t.created_at.isoformat(),
         updated_at=t.updated_at.isoformat(),

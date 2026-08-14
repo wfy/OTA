@@ -19,6 +19,20 @@ class Base(DeclarativeBase):
 def init_db():
     from app import models  # noqa: F401
     Base.metadata.create_all(bind=engine)
+    if DATABASE_URL.startswith("sqlite"):
+        from sqlalchemy import inspect, text
+
+        insp = inspect(engine)
+        if "tasks" in insp.get_table_names():
+            cols = {c["name"] for c in insp.get_columns("tasks")}
+            if "result_bin_key" not in cols:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE tasks "
+                            "ADD COLUMN result_bin_key VARCHAR(512) DEFAULT ''"
+                        )
+                    )
 
 
 def get_db():

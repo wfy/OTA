@@ -24,6 +24,7 @@ class TaskOut(BaseModel):
     progress: int
     message: str
     result_las_key: str
+    result_bin_key: str = ""
     error: str
     created_at: str
     updated_at: str
@@ -55,3 +56,21 @@ class AnnotationExportOut(BaseModel):
     key: str
     url: str
     counts: dict[str, int]
+
+
+class ReclassifyItem(BaseModel):
+    index: int = Field(ge=0)
+    classification: int = Field(ge=0, le=31)
+
+
+class ReclassifyRequest(BaseModel):
+    las_file_id: str
+    changes: list[ReclassifyItem] = Field(min_length=1)
+
+
+class ReclassifyOut(BaseModel):
+    key: str
+    url: str
+    bin_key: str
+    bin_url: str
+    applied: int

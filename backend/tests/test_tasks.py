@@ -19,6 +19,7 @@ from app.tasks import process_las_task  # noqa: E402
 
 def test_process_las_task(tmp_path):
     engine = create_engine(os.environ["DATABASE_URL"])
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     las_path = tmp_path / "tiny.las"
     rng = np.random.default_rng(1)
@@ -50,4 +51,5 @@ def test_process_las_task(tmp_path):
         assert task.status == TaskStatus.DONE
         assert task.progress == 100
         assert task.result_las_key.startswith("result/")
+        assert task.result_bin_key.startswith("result/")
     shutil.rmtree(os.environ["MINIO_FALLBACK_DIR"], ignore_errors=True)

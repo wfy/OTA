@@ -9,6 +9,7 @@ export interface UploadItem {
   status: 'uploading' | 'processing' | 'done' | 'failed';
   message: string;
   resultKey?: string;
+  resultBinKey?: string;
 }
 
 interface AppState {

@@ -22,6 +22,7 @@ export interface TaskOut {
   progress: number;
   message: string;
   result_las_key: string;
+  result_bin_key?: string;
   error: string;
 }
 
@@ -39,6 +40,14 @@ export interface AnnotationExportOut {
   key: string;
   url: string;
   counts: Record<string, number>;
+}
+
+export interface ReclassifyOut {
+  key: string;
+  url: string;
+  bin_key: string;
+  bin_url: string;
+  applied: number;
 }
 
 export const api = {
@@ -77,5 +86,10 @@ export const api = {
     jsonFetch<AnnotationExportOut>('/annotations/export', {
       method: 'POST',
       body: JSON.stringify({ las_file_id: lasFileId }),
+    }),
+  reclassify: (lasFileId: string, changes: Array<{ index: number; classification: number }>) =>
+    jsonFetch<ReclassifyOut>('/annotations/reclassify', {
+      method: 'POST',
+      body: JSON.stringify({ las_file_id: lasFileId, changes }),
     }),
 };

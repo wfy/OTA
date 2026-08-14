@@ -5,6 +5,51 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { createPortal } from 'react-dom';
+import type { ParsedPointCloudData } from '../workers/pointCloudParser';
+
+// Parse point cloud data in a Web Worker so the main thread never blocks.
+// Falls back to the legacy in-thread parser if workers are unavailable.
+export function parsePointCloudBuffer(
+  buffer: ArrayBuffer,
+  name: string
+): Promise<RawPointCloudData | null> {
+  return new Promise<RawPointCloudData | null>((resolve, reject) => {
+    const worker = new Worker(new URL('../workers/pointCloud.worker.ts', import.meta.url), {
+      type: 'module',
+    });
+    const timer = window.setTimeout(() => {
+      worker.terminate();
+      reject(new Error('point cloud parse timeout'));
+    }, 120000);
+    worker.onmessage = (
+      ev: MessageEvent<{ id: number; ok: boolean; data?: ParsedPointCloudData; error?: string }>
+    ) => {
+      window.clearTimeout(timer);
+      worker.terminate();
+      if (ev.data.ok && ev.data.data) {
+        resolve(ev.data.data as unknown as RawPointCloudData);
+      } else {
+        reject(new Error(ev.data.error || 'point cloud parse failed'));
+      }
+    };
+    worker.onerror = (ev) => {
+      window.clearTimeout(timer);
+      worker.terminate();
+      reject(new Error(ev.message || 'point cloud worker error'));
+    };
+    worker.postMessage({ id: 1, type: 'parse', buffer, name }, [buffer]);
+  });
+}
+
+export async function parseFullPointCloudFile(file: File): Promise<RawPointCloudData | null> {
+  try {
+    const buffer = await file.arrayBuffer();
+    return await parsePointCloudBuffer(buffer, file.name);
+  } catch (err) {
+    console.warn('Worker parse failed, falling back to legacy parser:', err);
+    return parseFullPointCloudFileLegacy(file);
+  }
+}
 
 // Register standard projections in proj4 engine
 proj4.defs('EPSG:4326', '+proj=longlat +datum=WGS84 +no_defs');
@@ -296,6 +341,24 @@ export const CESIUM_CLASS_COLORS: Record<number, THREE.Color> = {
   16: new THREE.Color(0xd946ef), // Insulator Strings - Electric Magenta
   17: new THREE.Color(0x8b5cf6), // Bridge / Structure - Purple
 };
+
+// 32x1 RGBA LUT: color per ASPRS class, alpha=0 hides the class in the shader.
+export function buildClassLutTexture(visibleClasses: number[]): THREE.DataTexture {
+  const data = new Uint8Array(32 * 4);
+  for (let c = 0; c < 32; c++) {
+    const color = CESIUM_CLASS_COLORS[c] || CESIUM_CLASS_COLORS[1];
+    const visible = visibleClasses.includes(c);
+    data[c * 4] = Math.round(color.r * 255);
+    data[c * 4 + 1] = Math.round(color.g * 255);
+    data[c * 4 + 2] = Math.round(color.b * 255);
+    data[c * 4 + 3] = visible ? 255 : 0;
+  }
+  const texture = new THREE.DataTexture(data, 32, 1, THREE.RGBAFormat);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 // Cesium 5-Stop Turbo/Spectral Elevation Color Ramp
 export function getCesiumElevationColor(normH: number): THREE.Color {
@@ -905,8 +968,8 @@ export interface RawPointCloudData {
   };
 }
 
-// Parse raw full point cloud file (LAS/LAZ binary or XYZ/TXT/CSV/PLY text) into 3D buffers
-export async function parseFullPointCloudFile(file: File): Promise<RawPointCloudData | null> {
+// Legacy in-thread parser (kept as fallback when Web Workers are blocked)
+export async function parseFullPointCloudFileLegacy(file: File): Promise<RawPointCloudData | null> {
   try {
     const isBinaryFormat = /\.(las|laz)$/i.test(file.name);
 
@@ -1685,6 +1748,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const controlsRef = useRef<OrbitControls | null>(null);
   const cesiumViewerRef = useRef<Cesium.Viewer | null>(null);
   const pointCloudMeshRef = useRef<THREE.Points | null>(null);
+  const pointCloudMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
 
   // View & Render Engine Settings
@@ -1698,6 +1762,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const [onlyPowerInfra, setOnlyPowerInfra] = useState<boolean>(false);
   const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
   const [detectionVersion, setDetectionVersion] = useState<number>(0);
+  const [dataRevision, setDataRevision] = useState<number>(0);
   const [pointSize, setPointSize] = useState<number>(0.5);
   const [pointDensity, setPointDensity] = useState<number>(100); // 10% - 100%
   const [showTerrain, setShowTerrain] = useState<boolean>(true);
@@ -2783,6 +2848,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         if (existingSegmentId && pendingParsedDataRef.current) {
           loadedPointCloudMapRef.current[existingSegmentId] = pendingParsedDataRef.current;
           setActiveSegmentId(existingSegmentId);
+          setDataRevision((v) => v + 1);
           setDetectionVersion((v) => v + 1);
           setDetectionNotice(null);
         } else {
@@ -3167,64 +3233,132 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     return { positions, colors, classIds };
   };
 
-  // Potree Point Cloud Shader with Eye Dome Lighting (EDL) Depth Silhouette & Shape Shader
-  const createPotreeEDLMaterial = (
+  // Single-draw point cloud shader: color modes and class visibility are switched
+  // via uniforms/LUT, so geometry is never rebuilt when display settings change.
+  const createRuntimeViewerMaterial = (
     size: number,
     edlEnabled: boolean,
     strength: number,
-    shape: 'circle' | 'square' | 'paraboloid'
+    shape: 'circle' | 'square' | 'paraboloid',
+    colorMode: string,
+    visibleClasses: number[],
+    hasColor: boolean,
+    spanZ: number
   ) => {
-    if (edlEnabled || shape !== 'square') {
-      return new THREE.ShaderMaterial({
-        uniforms: {
-          uPointSize: { value: size },
-          uEdlStrength: { value: strength },
-          uShapeType: { value: shape === 'circle' ? 1 : shape === 'paraboloid' ? 2 : 0 },
-        },
-        vertexShader: `
-          attribute vec3 color;
-          varying vec3 vColor;
-          varying float vDepth;
-          uniform float uPointSize;
-          void main() {
-            vColor = color;
-            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-            gl_Position = projectionMatrix * mvPosition;
-            gl_PointSize = clamp(uPointSize * (280.0 / -mvPosition.z), 1.0, 32.0);
-            vDepth = -mvPosition.z;
+    const modeMap: Record<string, number> = {
+      rgb: 0,
+      class: 1,
+      height: 2,
+      intensity: 3,
+      power_highlight: 4,
+      danger: 5,
+    };
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        uPointSize: { value: size },
+        uEdlStrength: { value: edlEnabled ? strength : 0 },
+        uShapeType: { value: shape === 'circle' ? 1 : shape === 'paraboloid' ? 2 : 0 },
+        uColorMode: { value: modeMap[colorMode] ?? 4 },
+        uHasColor: { value: hasColor ? 1 : 0 },
+        uSpanZ: { value: spanZ > 0 ? spanZ : 35 },
+        uClassLut: { value: buildClassLutTexture(visibleClasses) },
+      },
+      vertexShader: `
+        attribute float aClass;
+        attribute float aIntensity;
+        varying vec3 vColor;
+        varying float vDepth;
+        varying float vClass;
+        varying float vIntensity;
+        varying float vHeight;
+        uniform float uPointSize;
+        void main() {
+          vColor = color;
+          vClass = aClass;
+          vIntensity = aIntensity;
+          vHeight = position.y;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+          gl_PointSize = clamp(uPointSize * (280.0 / -mvPosition.z), 1.0, 32.0);
+          vDepth = -mvPosition.z;
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+        varying vec3 vColor;
+        varying float vDepth;
+        varying float vClass;
+        varying float vIntensity;
+        varying float vHeight;
+        uniform int uColorMode;
+        uniform float uHasColor;
+        uniform float uSpanZ;
+        uniform float uEdlStrength;
+        uniform int uShapeType;
+        uniform sampler2D uClassLut;
+
+        void main() {
+          vec2 coord = gl_PointCoord - vec2(0.5);
+          float distSq = dot(coord, coord);
+          if ((uShapeType == 1 || uShapeType == 2) && distSq > 0.25) {
+            discard;
           }
-        `,
-        fragmentShader: `
-          varying vec3 vColor;
-          varying float vDepth;
-          uniform float uEdlStrength;
-          uniform int uShapeType;
-          
-          void main() {
-            vec2 coord = gl_PointCoord - vec2(0.5);
-            float distSq = dot(coord, coord);
-            
-            if ((uShapeType == 1 || uShapeType == 2) && distSq > 0.25) {
-              discard;
+
+          float cls = floor(vClass + 0.5);
+          vec4 lut = texture2D(uClassLut, vec2((cls + 0.5) / 32.0, 0.5));
+          if (lut.a < 0.5) discard;
+
+          vec3 finalColor;
+          if (uColorMode == 0) {
+            finalColor = mix(vec3(0.75), vColor, uHasColor);
+          } else if (uColorMode == 2) {
+            float h = clamp(vHeight / max(uSpanZ, 0.001), 0.0, 1.0);
+            vec3 c0 = vec3(0.10, 0.25, 0.65);
+            vec3 c1 = vec3(0.10, 0.75, 0.90);
+            vec3 c2 = vec3(0.25, 0.80, 0.30);
+            vec3 c3 = vec3(0.95, 0.75, 0.15);
+            vec3 c4 = vec3(0.90, 0.15, 0.10);
+            float t = h * 4.0;
+            finalColor = t < 1.0 ? mix(c0, c1, t)
+              : t < 2.0 ? mix(c1, c2, t - 1.0)
+              : t < 3.0 ? mix(c2, c3, t - 2.0)
+              : mix(c3, c4, min(1.0, t - 3.0));
+          } else if (uColorMode == 3) {
+            float val = clamp(vIntensity * 1.4 + 0.1, 0.0, 1.0);
+            finalColor = vec3(val);
+          } else if (uColorMode == 5) {
+            if (cls == 5.0 || vHeight > uSpanZ * 0.6) {
+              finalColor = vec3(0.937, 0.267, 0.267);
+            } else if (cls == 14.0) {
+              finalColor = vec3(0.220, 0.722, 0.973);
+            } else {
+              finalColor = vec3(0.392, 0.424, 0.471);
             }
-            
-            float depthFactor = clamp(1.0 - (vDepth * 0.00035 * uEdlStrength), 0.35, 1.0);
-            float shadowHalo = smoothstep(0.25, 0.05, distSq);
-            
-            vec3 finalColor = vColor * depthFactor * (0.65 + 0.35 * shadowHalo);
-            gl_FragColor = vec4(finalColor, 1.0);
+          } else {
+            if (uColorMode == 4 && cls == 14.0) {
+              finalColor = vec3(0.0, 0.949, 1.0);
+            } else if (uColorMode == 4 && cls == 15.0) {
+              finalColor = vec3(1.0, 0.718, 0.0);
+            } else if (uColorMode == 4 && cls == 16.0) {
+              finalColor = vec3(0.851, 0.275, 0.937);
+            } else if (uColorMode == 4 && uHasColor > 0.5) {
+              finalColor = vColor;
+            } else {
+              finalColor = lut.rgb;
+            }
           }
-        `,
-        transparent: true,
-        depthWrite: true,
-      });
-    } else {
-      return new THREE.PointsMaterial({
-        size: size,
-        vertexColors: true,
-        sizeAttenuation: true,
-      });
-    }
+
+          float depthFactor = clamp(1.0 - (vDepth * 0.00035 * uEdlStrength), 0.35, 1.0);
+          float shadowHalo = smoothstep(0.25, 0.05, distSq);
+          finalColor *= depthFactor * (0.65 + 0.35 * shadowHalo);
+          gl_FragColor = vec4(finalColor, 1.0);
+        }
+      `,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: true,
+    });
+    return material;
   };
 
   // Render Initialization & Lifecycle Engine (Three.js / Potree / CesiumJS)
@@ -3413,153 +3547,128 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     };
   }, [isOpen, activeSegment?.id, renderEngine]);
 
-  // Reactive Zero-Lag Point Cloud Buffer & Attribute Updater
+  // Single-draw runtime point cloud renderer (RuntimeViewerDX11 style):
+  // geometry is built once per segment; display settings only touch uniforms/LUT/index.
   useEffect(() => {
     if (!isOpen || renderEngine === 'cesium' || !sceneRef.current || !activeSegment) return;
 
     const scene = sceneRef.current;
     const realData = loadedPointCloudMapRef.current[activeSegment.id];
 
-    // Remove existing point cloud mesh to prevent memory duplication
     if (pointCloudMeshRef.current) {
       scene.remove(pointCloudMeshRef.current);
       if (pointCloudMeshRef.current.geometry) pointCloudMeshRef.current.geometry.dispose();
+      if (pointCloudMaterialRef.current) pointCloudMaterialRef.current.dispose();
       pointCloudMeshRef.current = null;
+      pointCloudMaterialRef.current = null;
     }
 
     let rawPositions: Float32Array;
     let rawClassIds: Uint8Array;
-    let rawColors: Float32Array;
+    let rawColors: Float32Array | undefined;
+    let rawIntensities: Float32Array;
     let spanZ = 35;
 
     if (realData) {
       rawPositions = realData.positions;
       rawClassIds = realData.classIds;
-      rawColors = new Float32Array(realData.positions.length);
+      rawColors = realData.colors;
+      rawIntensities = realData.intensities;
       spanZ = realData.spanZ > 0 ? realData.spanZ : 35;
-
-      for (let i = 0; i < realData.classIds.length; i++) {
-        const idx = i * 3;
-        const classId = realData.classIds[i];
-        const posY = realData.positions[idx + 1];
-
-        let ptColor: THREE.Color;
-
-        if (classId === 8) {
-          ptColor = new THREE.Color(0xff0000); // 🚨 树障危险点云: 纯亮红色 (Pure Red)
-        } else if (colorMode === 'power_highlight') {
-          if (classId === 15) {
-            ptColor = new THREE.Color(0xffb700); // Tower Amber/Gold
-          } else if (classId === 14) {
-            ptColor = new THREE.Color(0x00f2ff); // Power Conductors/Wires: Neon Electric Cyan
-          } else if (classId === 16) {
-            ptColor = new THREE.Color(0xd946ef); // Insulator Strings - Electric Magenta
-          } else if (realData.colors && realData.colors.length > idx + 2) {
-            // Keep real photo RGB color for non-power points so trees/ground do NOT turn black
-            ptColor = new THREE.Color(realData.colors[idx], realData.colors[idx + 1], realData.colors[idx + 2]);
-          } else {
-            // ASPRS natural class colors for non-power points
-            if (classId === 2) ptColor = new THREE.Color(0x854d0e); // Ground Brown
-            else if (classId >= 3 && classId <= 5) ptColor = new THREE.Color(0x22c55e); // Vegetation Green
-            else ptColor = new THREE.Color(0x94a3b8); // Slate
-          }
-        } else if (colorMode === 'rgb') {
-          if (realData.colors) {
-            ptColor = new THREE.Color(realData.colors[idx], realData.colors[idx + 1], realData.colors[idx + 2]);
-          } else {
-            ptColor = CESIUM_CLASS_COLORS[classId] || CESIUM_CLASS_COLORS[1];
-          }
-        } else if (colorMode === 'class') {
-          ptColor = CESIUM_CLASS_COLORS[classId] || CESIUM_CLASS_COLORS[1];
-        } else if (colorMode === 'height') {
-          const normH = Math.min(1, Math.max(0, posY / spanZ));
-          ptColor = getCesiumElevationColor(normH);
-        } else if (colorMode === 'intensity') {
-          const val = realData.intensities[i] || 0.5;
-          const boostVal = Math.min(1.0, val * 1.4 + 0.1);
-          ptColor = new THREE.Color(boostVal, boostVal, boostVal);
-        } else if (colorMode === 'danger') {
-          if (classId === 5 || posY > spanZ * 0.6) ptColor = new THREE.Color(0xef4444);
-          else if (classId === 14) ptColor = new THREE.Color(0x38bdf8);
-          else ptColor = new THREE.Color(0x64748b);
-        } else {
-          ptColor = CESIUM_CLASS_COLORS[classId] || CESIUM_CLASS_COLORS[1];
-        }
-
-        rawColors[idx] = ptColor.r;
-        rawColors[idx + 1] = ptColor.g;
-        rawColors[idx + 2] = ptColor.b;
-      }
     } else {
       const generated = generateSegmentPointCloud(activeSegment);
       rawPositions = generated.positions;
-      rawColors = generated.colors;
       rawClassIds = generated.classIds;
+      rawColors = generated.colors;
+      rawIntensities = new Float32Array(generated.classIds.length).fill(0.5);
     }
 
-    // Potree LOD Point Budget Subsampling
-    const totalPoints = rawClassIds.length;
-    const targetBudget = Math.min(totalPoints, pointBudget);
-    const densityStride = Math.max(1, Math.floor(100 / pointDensity));
-    const budgetStride = Math.max(1, Math.floor(totalPoints / targetBudget));
-    const finalStride = Math.max(densityStride, budgetStride);
-
-    const validIndices: number[] = [];
-    for (let i = 0; i < totalPoints; i += finalStride) {
-      if (visibleClasses.includes(rawClassIds[i])) {
-        validIndices.push(i);
-      }
-    }
-
-    const visiblePositions = new Float32Array(validIndices.length * 3);
-    const visibleColors = new Float32Array(validIndices.length * 3);
-
-    for (let i = 0; i < validIndices.length; i++) {
-      const srcIdx = validIndices[i];
-      visiblePositions[i * 3] = rawPositions[srcIdx * 3];
-      visiblePositions[i * 3 + 1] = rawPositions[srcIdx * 3 + 1];
-      visiblePositions[i * 3 + 2] = rawPositions[srcIdx * 3 + 2];
-
-      visibleColors[i * 3] = rawColors[srcIdx * 3];
-      visibleColors[i * 3 + 1] = rawColors[srcIdx * 3 + 1];
-      visibleColors[i * 3 + 2] = rawColors[srcIdx * 3 + 2];
-    }
-
+    const total = rawClassIds.length;
     const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(visiblePositions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(visibleColors, 3));
+    geometry.setAttribute('position', new THREE.BufferAttribute(rawPositions, 3));
+    geometry.setAttribute(
+      'color',
+      new THREE.BufferAttribute(rawColors && rawColors.length ? rawColors : new Float32Array(rawPositions.length), 3)
+    );
+    const clsAttr = new Float32Array(total);
+    for (let i = 0; i < total; i++) clsAttr[i] = rawClassIds[i];
+    geometry.setAttribute('classification', new THREE.BufferAttribute(clsAttr, 1));
+    geometry.setAttribute(
+      'intensity',
+      new THREE.BufferAttribute(rawIntensities && rawIntensities.length ? rawIntensities : new Float32Array(total).fill(0.5), 1)
+    );
     geometryRef.current = geometry;
 
-    const material = createPotreeEDLMaterial(
+    const material = createRuntimeViewerMaterial(
       pointSize,
-      renderEngine === 'potree' ? useEDL : false,
+      renderEngine === 'potree' && useEDL,
       edlStrength,
-      pointShape
+      pointShape,
+      colorMode,
+      visibleClasses,
+      Boolean(rawColors && rawColors.length),
+      spanZ
     );
+    pointCloudMaterialRef.current = material;
 
     const pointCloudMesh = new THREE.Points(geometry, material);
     pointCloudMeshRef.current = pointCloudMesh;
     scene.add(pointCloudMesh);
 
-    // Auto-center camera target once
     if (controlsRef.current && cameraRef.current && realData) {
       const centerY = spanZ / 3;
       controlsRef.current.target.set(0, centerY, 0);
     }
-  }, [
-    isOpen,
-    activeSegment?.id,
-    renderEngine,
-    colorMode,
-    visibleClasses,
-    pointSize,
-    pointDensity,
-    pointBudget,
-    edlStrength,
-    useEDL,
-    pointShape,
-    detectionVersion,
-  ]);
+  }, [isOpen, activeSegment?.id, renderEngine, dataRevision]);
+
+  // Display settings only update shader uniforms/LUT and the sampling index buffer.
+  useEffect(() => {
+    if (!isOpen || renderEngine === 'cesium') return;
+    const material = pointCloudMaterialRef.current;
+    const geometry = geometryRef.current;
+    if (!material || !geometry) return;
+
+    const realData = activeSegment ? loadedPointCloudMapRef.current[activeSegment.id] : null;
+    const total = realData ? realData.classIds.length : geometry.attributes.classification?.count || 0;
+    const modeMap: Record<string, number> = { rgb: 0, class: 1, height: 2, intensity: 3, power_highlight: 4, danger: 5 };
+
+    const oldLut = material.uniforms.uClassLut.value as THREE.Texture;
+    const newLut = buildClassLutTexture(visibleClasses);
+    material.uniforms.uClassLut.value = newLut;
+    if (oldLut && oldLut !== newLut) oldLut.dispose();
+    material.uniforms.uColorMode.value = modeMap[colorMode] ?? 4;
+    material.uniforms.uHasColor.value = realData?.colors?.length ? 1 : 0;
+    material.uniforms.uSpanZ.value = realData?.spanZ || 35;
+    material.uniforms.uPointSize.value = pointSize;
+    material.uniforms.uEdlStrength.value = renderEngine === 'potree' && useEDL ? edlStrength : 0;
+    material.uniforms.uShapeType.value = pointShape === 'circle' ? 1 : pointShape === 'paraboloid' ? 2 : 0;
+
+    if (total > 0) {
+      const targetBudget = Math.min(total, pointBudget);
+      const densityStride = Math.max(1, Math.floor(100 / Math.max(1, pointDensity)));
+      const budgetStride = Math.max(1, Math.floor(total / targetBudget));
+      const stride = Math.max(densityStride, budgetStride);
+      const count = Math.ceil(total / stride);
+      const indices = new Uint32Array(count);
+      for (let i = 0, k = 0; i < total && k < count; i += stride, k++) indices[k] = i;
+      geometry.setIndex(new THREE.BufferAttribute(indices, 1));
+      geometry.setDrawRange(0, count);
+    }
+  }, [isOpen, activeSegment?.id, renderEngine, colorMode, visibleClasses, pointSize, pointDensity, pointBudget, useEDL, edlStrength, pointShape, dataRevision]);
+
+  // Manual tagging / brush updates classIds on the CPU; sync only the attribute.
+  useEffect(() => {
+    if (!isOpen || renderEngine === 'cesium') return;
+    const geometry = geometryRef.current;
+    const realData = activeSegmentId ? loadedPointCloudMapRef.current[activeSegmentId] : null;
+    if (!geometry || !realData) return;
+    const attr = geometry.getAttribute('classification');
+    if (!attr) return;
+    const arr = attr.array as Float32Array;
+    for (let i = 0; i < realData.classIds.length; i++) arr[i] = realData.classIds[i];
+    attr.needsUpdate = true;
+  }, [detectionVersion]);
+
 
   // 3D Fitted Wire Catenary Curves & Tower Overlays Renderer
   useEffect(() => {

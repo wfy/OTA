@@ -10,11 +10,15 @@ from sqlalchemy.orm import Session
 
 from app.db import get_db
 from app.models import Annotation, LasFile
+from app.models import Task
+from app.pipeline.otab import write_otab
 from app.schemas import (
     AnnotationCreate,
     AnnotationExportOut,
     AnnotationExportRequest,
     AnnotationOut,
+    ReclassifyOut,
+    ReclassifyRequest,
 )
 from app.storage import Storage
 
@@ -98,6 +102,55 @@ def export_annotations(body: AnnotationExportRequest, db: Session = Depends(get_
             out_path.read_bytes(),
         )
     return AnnotationExportOut(key=key, url=_storage().url(key), counts=codes)
+
+
+@router.post("/reclassify", response_model=ReclassifyOut)
+def reclassify_points(body: ReclassifyRequest, db: Session = Depends(get_db)):
+    """Apply point-index based classification changes to the classified LAS and regenerate OTAB."""
+    las_row = db.get(LasFile, body.las_file_id)
+    if not las_row:
+        raise HTTPException(status_code=404, detail="las file not found")
+    task = (
+        db.query(Task)
+        .filter(Task.las_file_id == body.las_file_id, Task.result_las_key != "")
+        .order_by(Task.updated_at.desc())
+        .first()
+    )
+    if not task:
+        raise HTTPException(status_code=409, detail="no classified result yet")
+
+    raw = _storage().open(task.result_las_key)
+    with tempfile.TemporaryDirectory() as tmp:
+        in_path = Path(tmp) / f"{Path(las_row.filename).stem}_classified.las"
+        in_path.write_bytes(raw.getvalue())
+        las = laspy.read(in_path)
+        count = len(las.points)
+        idx = np.asarray([c.index for c in body.changes], dtype=np.int64)
+        cls = np.asarray([c.classification for c in body.changes], dtype=np.uint8)
+        valid = idx < count
+        idx = idx[valid]
+        cls = cls[valid]
+        if len(idx) == 0:
+            raise HTTPException(status_code=400, detail="no valid point indices")
+        las.classification[idx] = cls
+        stamp = int(time.time())
+        out_las = Path(tmp) / f"{las_row.id}_{stamp}_reclassified.las"
+        out_bin = Path(tmp) / f"{las_row.id}_{stamp}_reclassified.otabin"
+        las.write(out_las)
+        write_otab(str(out_las), str(out_bin))
+        key = _storage().save_result(
+            f"annotations/{las_row.id}_{stamp}_{out_las.name}", out_las.read_bytes()
+        )
+        bin_key = _storage().save_result(
+            f"annotations/{las_row.id}_{stamp}_{out_bin.name}", out_bin.read_bytes()
+        )
+    return ReclassifyOut(
+        key=key,
+        url=_storage().url(key),
+        bin_key=bin_key,
+        bin_url=_storage().url(bin_key),
+        applied=int(len(idx)),
+    )
 
 
 def _to_out(a: Annotation) -> AnnotationOut:

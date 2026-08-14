@@ -42,7 +42,13 @@ export const UploadPanel = forwardRef<UploadPanelHandle, object>(
         ws.onmessage = (ev) => {
           const data = JSON.parse(ev.data);
           if (data.status === 'done') {
-            updateUpload(upload_id, { status: 'done', progress: 100, message: '分类完成', resultKey: data.result });
+            updateUpload(upload_id, {
+              status: 'done',
+              progress: 100,
+              message: '分类完成',
+              resultKey: data.result,
+              resultBinKey: data.result_bin,
+            });
             ws.close();
           } else if (data.status === 'failed') {
             updateUpload(upload_id, { status: 'failed', message: data.error });

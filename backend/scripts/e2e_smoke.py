@@ -61,6 +61,12 @@ def main():
         r = client.get(f"/api/files/raw/{task['result_las_key']}")
         r.raise_for_status()
         out.write_bytes(r.content)
+        bin_out = out.with_suffix(".otabin")
+        r = client.get(f"/api/files/raw/{task['result_bin_key']}")
+        r.raise_for_status()
+        bin_out.write_bytes(r.content)
+        if bin_out.read_bytes()[:4] != b"OTAB":
+            raise SystemExit("OTAB magic check failed")
         las = laspy.read(out)
         classes, counts = np.unique(las.classification, return_counts=True)
         # 标注闭环冒烟：全量 bbox 标注为 vegetation，导出后校验分类
@@ -91,6 +97,7 @@ def main():
 
 - 输入: {src}（{src.stat().st_size / 1024 / 1024:.1f} MB）
 - 结果: {out}（任务 {task_id}）
+- OTAB: {bin_out}（{bin_out.stat().st_size / 1024 / 1024:.1f} MB，magic 校验通过）
 - 标注闭环: 全量 bbox 标注 vegetation → 导出后 class=5 点数 {labeled_veg}（计数 {export['counts']}）
 - 总耗时: {elapsed:.1f}s（上传+分类+下载）
 - LAS classification 分布: {dict(zip(classes.tolist(), counts.tolist()))}
