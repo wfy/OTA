@@ -1772,7 +1772,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
   // View & Render Engine Settings
   const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium' | 'octree' | 'potree_core'>(
-    'potree_core'
+    'potree'
   );
   const [pointBudget, setPointBudget] = useState<number>(500000); // 默认 50 万点预算（性能优先）
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
