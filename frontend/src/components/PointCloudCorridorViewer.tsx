@@ -1774,7 +1774,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium' | 'octree' | 'potree_core'>(
     'potree_core'
   );
-  const [pointBudget, setPointBudget] = useState<number>(1000000); // 默认 100 万点预算（减少 LOD 预算截断）
+  const [pointBudget, setPointBudget] = useState<number>(500000); // 默认 50 万点预算（性能优先）
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
   const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('circle');
   const [useRTC, setUseRTC] = useState<boolean>(true); // Cesium RTC Relative-to-Center
@@ -2964,6 +2964,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     if (!pco || !potree) return;
     const material = pco.material;
     material.size = pointSize;
+    material.minSize = 1;
+    material.maxSize = 8;
     material.pointSizeType = PointSizeType.ATTENUATED;
     material.shape = pointShape === 'square' ? PotreeShape.SQUARE : PotreeShape.CIRCLE;
     const modeMap: Record<string, PointColorType> = {
@@ -3544,9 +3546,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     cameraRef.current = camera;
     camera.position.set(0, 45, (activeSegment?.length || 400) * 0.85);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: 'high-performance' });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.setPixelRatio(1);
     rendererRef.current = renderer;
     container.appendChild(renderer.domElement);
 
@@ -3613,12 +3615,14 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     let interactionTimer: number | null = null;
     const onPointerDown = () => {
       document.body.classList.add('ota-interacting');
+      renderer.setPixelRatio(0.75);
       if (interactionTimer !== null) window.clearTimeout(interactionTimer);
     };
     const onPointerUp = () => {
       if (interactionTimer !== null) window.clearTimeout(interactionTimer);
       interactionTimer = window.setTimeout(() => {
         document.body.classList.remove('ota-interacting');
+        renderer.setPixelRatio(1);
       }, 150);
     };
     container.addEventListener('pointerdown', onPointerDown);
