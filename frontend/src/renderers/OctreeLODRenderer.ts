@@ -38,12 +38,32 @@ export class OctreeLODRenderer {
   private meshes = new Map<number, CachedNode>();
   private pointSize: number;
   private budget: number;
-  private screenThreshold = 56;
+  private screenThreshold = 96;
   private maxCached = 512;
   private frame = 0;
   private colorMode: 'rgb' | 'class' = 'rgb';
   private hasColor: boolean;
+  private preloaded = false;
   readonly lastStats = { visibleNodes: 0, drawnPoints: 0, cachedNodes: 0 };
+  private updateMs = 0;
+
+  /**
+   * Pre-create node meshes in small batches so camera movement never triggers
+   * GPU buffer creation (the main source of rotation stutter).
+   * Returns true when all nodes are preloaded.
+   */
+  preloadStep(limit = 24): boolean {
+    if (this.preloaded) return true;
+    let created = 0;
+    for (const node of this.octree.nodes) {
+      if (this.meshes.has(node.id)) continue;
+      this.meshes.set(node.id, this.createMesh(node));
+      created++;
+      if (created >= limit) return false;
+    }
+    this.preloaded = true;
+    return true;
+  }
 
   private tmpFrustum = new THREE.Frustum();
   private tmpMatrix = new THREE.Matrix4();
@@ -94,6 +114,7 @@ export class OctreeLODRenderer {
 
   update(camera: THREE.PerspectiveCamera, height: number) {
     if (this.octree.rootId < 0) return;
+    const t0 = performance.now();
     this.frame++;
     this.tmpMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.tmpFrustum.setFromProjectionMatrix(this.tmpMatrix);
@@ -139,6 +160,8 @@ export class OctreeLODRenderer {
     this.lastStats.visibleNodes = visibleIds.size;
     this.lastStats.drawnPoints = used;
     this.lastStats.cachedNodes = this.meshes.size;
+    this.updateMs = performance.now() - t0;
+    (this.lastStats as { updateMs?: number }).updateMs = this.updateMs;
     this.evict();
   }
 

@@ -3520,6 +3520,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
       controls.update();
       if (renderEngine === 'octree') {
+        octreeLODRendererRef.current?.preloadStep(24);
         octreeLODRendererRef.current?.update(camera, height);
       }
       if (!needsRender && !isPatrolling) return;
@@ -3540,10 +3541,32 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
     window.addEventListener('resize', handleResize);
 
+    // Drop heavy backdrop blur while interacting (compositor cost is the main
+    // source of "sticky" rotation even with few points).
+    let interactionTimer: number | null = null;
+    const onPointerDown = () => {
+      document.body.classList.add('ota-interacting');
+      if (interactionTimer !== null) window.clearTimeout(interactionTimer);
+    };
+    const onPointerUp = () => {
+      if (interactionTimer !== null) window.clearTimeout(interactionTimer);
+      interactionTimer = window.setTimeout(() => {
+        document.body.classList.remove('ota-interacting');
+      }, 150);
+    };
+    container.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+
     return () => {
       cancelAnimationFrame(animId);
       controls.removeEventListener('change', markRender);
       window.removeEventListener('resize', handleResize);
+      container.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+      if (interactionTimer !== null) window.clearTimeout(interactionTimer);
+      document.body.classList.remove('ota-interacting');
       octreeLODRendererRef.current?.dispose();
       octreeLODRendererRef.current = null;
       renderer.dispose();
