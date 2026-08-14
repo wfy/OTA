@@ -1689,7 +1689,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
   // View & Render Engine Settings
   const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium'>('potree');
-  const [pointBudget, setPointBudget] = useState<number>(1000000); // Max 1,000,000 points budget
+  const [pointBudget, setPointBudget] = useState<number>(400000); // 默认 40 万点预算（性能优先）
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
   const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('circle');
   const [useRTC, setUseRTC] = useState<boolean>(true); // Cesium RTC Relative-to-Center
@@ -3367,6 +3367,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
     // Animation Loop
     let animId: number;
+    let needsRender = true;
+    const markRender = () => { needsRender = true; };
+    controls.addEventListener('change', markRender);
     const animate = () => {
       animId = requestAnimationFrame(animate);
 
@@ -3384,6 +3387,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       }
 
       controls.update();
+      if (!needsRender && !isPatrolling) return;
+      needsRender = false;
       renderer.render(scene, camera);
     };
 
@@ -3402,6 +3407,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
     return () => {
       cancelAnimationFrame(animId);
+      controls.removeEventListener('change', markRender);
       window.removeEventListener('resize', handleResize);
       renderer.dispose();
     };
@@ -3819,7 +3825,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         // Shift is NOT held: Show camera navigation cursor, hide collision reticle
         canvas.style.cursor = 'grab';
         reticleGroup.visible = false;
-        setHoveredCoords(null);
+        if (hoveredCoords !== null) setHoveredCoords(null);
         return;
       }
 
@@ -4340,7 +4346,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   );
 
   return (
-    <div className={`${embedded ? 'absolute inset-0 z-0 pl-[352px]' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
+    <div className={`${embedded ? 'absolute inset-0 z-0' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
       {/* Top Cesium/Google Earth Style Global Header */}
       <header className="min-h-13 bg-slate-900/50 border-b border-white/20 backdrop-blur-2xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 z-20 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]">
         <div className="flex items-center gap-3 min-w-0">
@@ -4452,7 +4458,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       </header>
 
       {/* Fullscreen Body */}
-      <div className="flex-1 relative flex overflow-hidden">
+      <div className={`${embedded ? 'pl-[352px]' : ''} flex-1 relative flex overflow-hidden`}>
         {/* Left Sidebar: Province / City / Line / Corridor Hierarchy Drawer */}
         {embedded ? (treeHost ? createPortal(treeAside, treeHost) : null) : treeAside}
 
