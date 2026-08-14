@@ -1765,7 +1765,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const [dataRevision, setDataRevision] = useState<number>(0);
   const [pointSize, setPointSize] = useState<number>(0.5);
   const [pointDensity, setPointDensity] = useState<number>(100); // 10% - 100%
-  const [showTerrain, setShowTerrain] = useState<boolean>(true);
   const [showAtmosphere, setShowAtmosphere] = useState<boolean>(true);
   const [isDisplaySettingsOpen, setIsDisplaySettingsOpen] = useState<boolean>(false);
   const [isHudExpanded, setIsHudExpanded] = useState<boolean>(false);
@@ -3264,8 +3263,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         uClassLut: { value: buildClassLutTexture(visibleClasses) },
       },
       vertexShader: `
-        attribute float aClass;
-        attribute float aIntensity;
+        attribute float classification;
+        attribute float intensity;
         varying vec3 vColor;
         varying float vDepth;
         varying float vClass;
@@ -3274,8 +3273,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         uniform float uPointSize;
         void main() {
           vColor = color;
-          vClass = aClass;
-          vIntensity = aIntensity;
+          vClass = classification;
+          vIntensity = intensity;
           vHeight = position.y;
           vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mvPosition;
@@ -3492,12 +3491,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const dirLight = new THREE.DirectionalLight(0x38bdf8, 1.2);
     dirLight.position.set(200, 400, 200);
     scene.add(dirLight);
-
-    if (showTerrain) {
-      const gridHelper = new THREE.GridHelper(1200, 60, 0x0284c7, 0x1e293b);
-      gridHelper.position.set(0, -2, 0);
-      scene.add(gridHelper);
-    }
 
     // Animation Loop
     let animId: number;
@@ -5604,15 +5597,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           {/* Bottom Toolbar */}
           <div className="absolute bottom-3 left-4 right-4 bg-slate-900/50 backdrop-blur-2xl p-2.5 rounded-2xl border border-white/20 flex flex-wrap items-center justify-between gap-2 text-xs font-mono shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] z-20">
             <div className="flex items-center gap-3 text-[11px] text-slate-300">
-              <label className="flex items-center gap-1 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={showTerrain}
-                  onChange={(e) => setShowTerrain(e.target.checked)}
-                  className="rounded accent-cyan-500"
-                />
-                <span>数字网格地形</span>
-              </label>
               <label className="flex items-center gap-1 cursor-pointer">
                 <input
                   type="checkbox"
