@@ -1,6 +1,8 @@
 // Pure point cloud parsers (LAS/LAZ binary, ASCII text, OTAB) that can run in a
 // Web Worker so the browser main thread never blocks on parsing.
 
+import type { OctreeData } from './octreeBuilder';
+
 export interface ParsedPointCloudData {
   positions: Float32Array;
   classIds: Uint8Array;
@@ -14,6 +16,7 @@ export interface ParsedPointCloudData {
   manualTowers: unknown[];
   manualWires: unknown[];
   stats: { wireCount: number; towerCount: number; groundCount: number; vegCount: number };
+  octree?: OctreeData;
 }
 
 const OTAB_MAGIC = 'OTAB';
