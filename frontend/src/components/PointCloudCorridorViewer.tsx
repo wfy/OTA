@@ -1628,6 +1628,19 @@ export interface CorridorSegmentData {
   centerCoordinates: { lat: number; lon: number; alt: number; rtcX: number; rtcY: number; rtcZ: number };
 }
 
+function SegmentUploadProgress({ segmentId }: { segmentId: string }) {
+  const upload = useAppStore((s) => s.uploads.find((u) => u.segmentId === segmentId));
+  if (!upload || upload.status === 'done') return null;
+  return (
+    <div className="px-2 py-1 space-y-0.5">
+      <div className="h-1 rounded bg-white/10">
+        <div className="h-1 rounded bg-emerald-400" style={{ width: `${upload.progress}%` }} />
+      </div>
+      <p className="text-[9px] text-slate-400">{upload.message}</p>
+    </div>
+  );
+}
+
 // Tree Hierarchy Node
 export interface HierarchyNode {
   id: string;
@@ -1680,7 +1693,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
   const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('circle');
   const [useRTC, setUseRTC] = useState<boolean>(true); // Cesium RTC Relative-to-Center
-  const [useEDL, setUseEDL] = useState<boolean>(true); // Eye-Dome Lighting
+  const [useEDL, setUseEDL] = useState<boolean>(false); // Eye-Dome Lighting（性能开销大，默认关闭）
   const [colorMode, setColorMode] = useState<'power_highlight' | 'rgb' | 'class' | 'height' | 'intensity' | 'danger'>('power_highlight');
   const [onlyPowerInfra, setOnlyPowerInfra] = useState<boolean>(false);
   const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
@@ -1753,7 +1766,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
   // Active Segment ID currently rendered in primary 3D window
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
-  const lastUpload = useAppStore((s) => s.uploads[s.uploads.length - 1]);
+  const lastUploadStatus = useAppStore((s) => s.uploads[s.uploads.length - 1]?.status);
 
   // Tree Barrier Analysis Core Function
   const handleRunTreeBarrierAnalysis = (radiusParam?: number) => {
@@ -2789,8 +2802,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   }, [importForm]);
 
   useEffect(() => {
-    if (lastUpload?.status === 'done') setIsImportModalOpen(false);
-  }, [lastUpload?.status]);
+    if (lastUploadStatus === 'done') setIsImportModalOpen(false);
+  }, [lastUploadStatus]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
@@ -4205,14 +4218,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           </div>
         </div>
 
-        {isSegment && lastUpload?.segmentId === node.id && lastUpload.status !== 'done' && (
-          <div className="px-2 py-1 space-y-0.5">
-            <div className="h-1 rounded bg-white/10">
-              <div className="h-1 rounded bg-emerald-400" style={{ width: `${lastUpload.progress}%` }} />
-            </div>
-            <p className="text-[9px] text-slate-400">{lastUpload.message}</p>
-          </div>
-        )}
+        {isSegment && <SegmentUploadProgress segmentId={node.id} />}
 
         {/* Render Children under nested padding */}
         {hasChildren && isExpanded && (
@@ -4336,8 +4342,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   return (
     <div className={`${embedded ? 'absolute inset-0 z-0 pl-[352px]' : 'fixed inset-0 z-[120]'} flex flex-col bg-slate-950 font-sans text-slate-100 overflow-hidden ${embedded ? '' : 'animate-fade-in'}`}>
       {/* Top Cesium/Google Earth Style Global Header */}
-      <header className="h-13 bg-slate-900/50 border-b border-white/20 backdrop-blur-2xl px-4 flex items-center justify-between z-20 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]">
-        <div className="flex items-center gap-3">
+      <header className="min-h-13 bg-slate-900/50 border-b border-white/20 backdrop-blur-2xl px-3 py-2 flex flex-wrap items-center justify-between gap-2 z-20 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)]">
+        <div className="flex items-center gap-3 min-w-0">
           {/* macOS window traffic light dots */}
           <div className="flex items-center gap-1.5 mr-1">
             <div className="w-3 h-3 rounded-full bg-rose-500/90 shadow-sm border border-rose-600/30" />
@@ -4357,7 +4363,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                 Cesium 3D Tiles RTC
               </span>
             </div>
-            <p className="text-[11px] text-slate-300/80 font-mono">
+            <p className="text-[11px] text-slate-300/80 font-mono hidden xl:block">
               {activeSegment ? (
                 <>
                   全屏渲染: <strong className="text-cyan-300">{activeSegment.name}</strong> ({activeSegment.pointCount.toLocaleString()} 点) | 坐标: {activeSegment.centerCoordinates.lat}°N, {activeSegment.centerCoordinates.lon}°E
@@ -4370,7 +4376,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         </div>
 
         {/* Right Header Operations */}
-        <div className="flex items-center gap-2 font-mono text-xs">
+        <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs">
           {/* Display & Render Settings Popover Trigger */}
           <button
             onClick={() => {
@@ -4385,7 +4391,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             title="调节点云渲染引擎、大小、预算、EDL深度与着色模式"
           >
             <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-            <span>⚙️ 渲染与控制</span>
+            <span className="hidden lg:inline">⚙️ 渲染与控制</span>
           </button>
 
           {/* Tagging Drawer Trigger */}
@@ -4402,7 +4408,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             title="查看或增加已标定杆塔与导线列表"
           >
             <Tag className="w-3.5 h-3.5 text-amber-400" />
-            <span>🏷️ 标记清单</span>
+            <span className="hidden md:inline">🏷️ 标记清单</span>
             {activeSegment && loadedPointCloudMapRef.current[activeSegment.id] && (
               <span className="px-1.5 py-0.2 text-[10px] bg-amber-950 text-amber-300 rounded-full font-bold border border-amber-500/40">
                 {(loadedPointCloudMapRef.current[activeSegment.id]?.manualTowers?.length || 0) +
@@ -4422,7 +4428,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             title="模拟无人机沿电力廊道三维飞行巡检"
           >
             {isPatrolling ? <Pause className="w-3.5 h-3.5 text-amber-400" /> : <Play className="w-3.5 h-3.5 text-cyan-400" />}
-            <span>{isPatrolling ? '暂停巡航' : '模拟巡航'}</span>
+            <span className="hidden md:inline">{isPatrolling ? '暂停巡航' : '模拟巡航'}</span>
           </button>
 
           <button
