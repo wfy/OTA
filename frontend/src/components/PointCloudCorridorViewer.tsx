@@ -1685,7 +1685,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const [onlyPowerInfra, setOnlyPowerInfra] = useState<boolean>(false);
   const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
   const [detectionVersion, setDetectionVersion] = useState<number>(0);
-  const [pointSize, setPointSize] = useState<number>(1);
+  const [pointSize, setPointSize] = useState<number>(0.5);
   const [pointDensity, setPointDensity] = useState<number>(100); // 10% - 100%
   const [showTerrain, setShowTerrain] = useState<boolean>(true);
   const [showAtmosphere, setShowAtmosphere] = useState<boolean>(true);
@@ -2929,6 +2929,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     e?.preventDefault();
 
     const newSegId = `seg-custom-${Date.now()}`;
+    const provId = `prov-${importForm.province || '未命名省份'}`;
+    const cityId = `city-${importForm.province || ''}-${importForm.city || ''}`;
+    const lineId = `line-${importForm.province || ''}-${importForm.city || ''}-${importForm.lineName || ''}`;
     const newSegData: CorridorSegmentData = {
       id: newSegId,
       name: importForm.segmentName || '自定激光点云廊道',
@@ -2964,10 +2967,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       segmentData: newSegData,
     };
 
-    let matchedProvId = '';
-    let matchedCityId = '';
-    let matchedLineId = '';
-
     setHierarchyData((prev) => {
       const updated = JSON.parse(JSON.stringify(prev)) as HierarchyNode[];
 
@@ -2975,7 +2974,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       let provNode = updated.find((p) => p.name.includes(importForm.province) || importForm.province.includes(p.name));
       if (!provNode) {
         provNode = {
-          id: `prov-${Date.now()}`,
+          id: provId,
           name: importForm.province,
           type: 'province',
           lat: importForm.lat,
@@ -2985,14 +2984,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         };
         updated.push(provNode);
       }
-      matchedProvId = provNode.id;
-
       // 2. Find matching city or create
       if (!provNode.children) provNode.children = [];
       let cityNode = provNode.children.find((c) => c.name.includes(importForm.city) || importForm.city.includes(c.name));
       if (!cityNode) {
         cityNode = {
-          id: `city-${Date.now()}`,
+          id: cityId,
           name: importForm.city,
           type: 'city',
           lat: importForm.lat,
@@ -3002,14 +2999,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         };
         provNode.children.push(cityNode);
       }
-      matchedCityId = cityNode.id;
-
       // 3. Find matching line or create
       if (!cityNode.children) cityNode.children = [];
       let lineNode = cityNode.children.find((l) => l.name.includes(importForm.lineName) || importForm.lineName.includes(l.name));
       if (!lineNode) {
         lineNode = {
-          id: `line-${Date.now()}`,
+          id: lineId,
           name: importForm.lineName,
           type: 'line',
           lat: importForm.lat,
@@ -3019,8 +3014,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         };
         cityNode.children.push(lineNode);
       }
-      matchedLineId = lineNode.id;
-
       // 4. Append imported corridor segment node under line
       if (!lineNode.children) lineNode.children = [];
       lineNode.children.push(newSegNode);
@@ -3031,9 +3024,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     // Automatically expand parent nodes
     setExpandedNodeIds((prev) => {
       const next = new Set(prev);
-      if (matchedProvId) next.add(matchedProvId);
-      if (matchedCityId) next.add(matchedCityId);
-      if (matchedLineId) next.add(matchedLineId);
+      next.add(provId);
+      next.add(cityId);
+      next.add(lineId);
       return next;
     });
 
@@ -5021,9 +5014,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                 </div>
                 <input
                   type="range"
-                  min="0.5"
+                  min="0.1"
                   max="10.0"
-                  step="0.5"
+                  step="0.1"
                   value={pointSize}
                   onChange={(e) => setPointSize(parseFloat(e.target.value))}
                   className="w-full accent-cyan-400 cursor-pointer"
