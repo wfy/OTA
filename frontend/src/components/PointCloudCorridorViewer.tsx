@@ -3619,11 +3619,21 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         setRenderEngine('potree');
         return;
       }
+      const material = createRuntimeViewerMaterial(
+        pointSize,
+        useEDL,
+        edlStrength,
+        pointShape,
+        colorMode,
+        visibleClasses,
+        Boolean(rawColors && rawColors.length),
+        spanZ
+      );
+      pointCloudMaterialRef.current = material;
       octreeLODRendererRef.current = new OctreeLODRenderer(
         scene,
         octree,
-        Boolean(rawColors && rawColors.length),
-        pointSize,
+        material,
         pointBudget
       );
       controlsRef.current?.dispatchEvent({ type: 'change' });
@@ -3688,10 +3698,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   useEffect(() => {
     if (!isOpen || renderEngine === 'cesium') return;
     if (renderEngine === 'octree') {
-      octreeLODRendererRef.current?.setPointSize(pointSize);
       octreeLODRendererRef.current?.setBudget(pointBudget);
-      octreeLODRendererRef.current?.setColorMode(colorMode);
-      return;
     }
     const material = pointCloudMaterialRef.current;
     const geometry = geometryRef.current;
@@ -3709,7 +3716,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     material.uniforms.uHasColor.value = realData?.colors?.length ? 1 : 0;
     material.uniforms.uSpanZ.value = realData?.spanZ || 35;
     material.uniforms.uPointSize.value = pointSize;
-    material.uniforms.uEdlStrength.value = renderEngine === 'potree' && useEDL ? edlStrength : 0;
+    material.uniforms.uEdlStrength.value = useEDL ? edlStrength : 0;
     material.uniforms.uShapeType.value = pointShape === 'circle' ? 1 : pointShape === 'paraboloid' ? 2 : 0;
 
     if (total > 0) {
