@@ -3519,7 +3519,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       webgpuCanvasRef.current = webgpuCanvas;
     }
 
-    const renderer = new THREE.WebGLRenderer({ antialias: false, alpha: true, powerPreference: 'high-performance' });
+    const renderer = new THREE.WebGLRenderer({
+      antialias: false,
+      alpha: true,
+      preserveDrawingBuffer: useWebGPU,
+      powerPreference: 'high-performance',
+    });
     renderer.setSize(width, height);
     renderer.setPixelRatio(1);
     renderer.setClearColor(0x000000, renderEngine === 'webgpu' ? 0 : 1);
@@ -3810,6 +3815,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           try {
             const renderer = await WebGPUPointCloudRenderer.create(canvas, wgData, wgStyle);
             webgpuRendererRef.current = renderer;
+            console.info('[WebGPU] point cloud renderer active:', renderer.adapterInfo);
             controlsRef.current?.dispatchEvent({ type: 'change' });
           } catch (err) {
             console.warn('WebGPU renderer init failed, falling back to WebGL:', err);

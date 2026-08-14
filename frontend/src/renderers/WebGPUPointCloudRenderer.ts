@@ -190,6 +190,7 @@ export class WebGPUPointCloudRenderer {
   private viewProj = new THREE.Matrix4();
   private cameraPos = new THREE.Vector3();
   private disposed = false;
+  readonly adapterInfo: any;
 
   static isSupported(): boolean {
     return typeof navigator !== 'undefined' && !!(navigator as any).gpu;
@@ -204,12 +205,25 @@ export class WebGPUPointCloudRenderer {
     if (!gpu) throw new Error('WebGPU not supported');
     const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
     if (!adapter) throw new Error('WebGPU adapter unavailable');
+    let info: any = null;
+    try {
+      info = adapter.info || (adapter.requestAdapterInfo ? await adapter.requestAdapterInfo() : null);
+    } catch {
+      info = null;
+    }
+    const softLabel = `${info?.architecture || ''} ${info?.description || ''} ${info?.device || ''}`.toLowerCase();
+    if (
+      adapter.isFallbackAdapter === true ||
+      /swiftshader|llvmpipe|softpipe|software/i.test(softLabel)
+    ) {
+      throw new Error('WebGPU software adapter detected, falling back to WebGL');
+    }
     const device = await adapter.requestDevice();
     const format = gpu.getPreferredCanvasFormat();
     const context = canvas.getContext('webgpu') as any;
     if (!context) throw new Error('webgpu canvas context unavailable');
-    context.configure({ device, format, alphaMode: 'premultiplied' });
-    return new WebGPUPointCloudRenderer(device, context, canvas, format, data, style);
+    context.configure({ device, format, alphaMode: 'opaque' });
+    return new WebGPUPointCloudRenderer(device, context, canvas, format, data, style, info);
   }
 
   private constructor(
@@ -218,13 +232,15 @@ export class WebGPUPointCloudRenderer {
     canvas: HTMLCanvasElement,
     format: string,
     data: WebGPUPointCloudData,
-    style: WebGPUPointCloudStyle
+    style: WebGPUPointCloudStyle,
+    adapterInfo: any
   ) {
     this.device = device;
     this.context = context;
     this.canvas = canvas;
     this.format = format;
     this.style = { ...style };
+    this.adapterInfo = adapterInfo;
     this.total = data.pointCount;
     this.uniformsData = new ArrayBuffer(UNIFORM_SIZE);
 
@@ -369,7 +385,7 @@ export class WebGPUPointCloudRenderer {
     this.context.configure({
       device: this.device,
       format: this.format,
-      alphaMode: 'premultiplied',
+      alphaMode: 'opaque',
     });
   }
 
@@ -433,7 +449,7 @@ export class WebGPUPointCloudRenderer {
 
     const colorAttachment = {
       view: this.context.getCurrentTexture().createView(),
-      clearValue: { r: 0, g: 0, b: 0, a: 0 },
+      clearValue: { r: 0.007843, g: 0.023529, b: 0.090196, a: 1 },
       loadOp: 'clear',
       storeOp: 'store',
     } as any;
