@@ -6,7 +6,6 @@ import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { createPortal } from 'react-dom';
 import type { ParsedPointCloudData } from '../workers/pointCloudParser';
-import { WebGPUPointCloudRenderer } from '../renderers/WebGPUPointCloudRenderer';
 
 // Parse point cloud data in a Web Worker so the main thread never blocks.
 // Falls back to the legacy in-thread parser if workers are unavailable.
@@ -359,18 +358,6 @@ export function buildClassLutTexture(visibleClasses: number[]): THREE.DataTextur
   texture.minFilter = THREE.NearestFilter;
   texture.needsUpdate = true;
   return texture;
-}
-
-export function buildClassColorArray(): Float32Array {
-  const arr = new Float32Array(32 * 4);
-  for (let c = 0; c < 32; c++) {
-    const color = CESIUM_CLASS_COLORS[c] || CESIUM_CLASS_COLORS[1];
-    arr[c * 4] = color.r;
-    arr[c * 4 + 1] = color.g;
-    arr[c * 4 + 2] = color.b;
-    arr[c * 4 + 3] = 1;
-  }
-  return arr;
 }
 
 // Cesium 5-Stop Turbo/Spectral Elevation Color Ramp
@@ -1763,23 +1750,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const pointCloudMeshRef = useRef<THREE.Points | null>(null);
   const pointCloudMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
-  const webgpuRendererRef = useRef<WebGPUPointCloudRenderer | null>(null);
-  const webgpuCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pointSizeRef = useRef<number>(0.5);
-  const maxPointSizeRef = useRef<number>(24);
-  const isInteractingRef = useRef<boolean>(false);
-  const interactionTimerRef = useRef<number | null>(null);
-  const startRenderLoopRef = useRef<() => void>(() => {});
-  const patrollingRef = useRef<boolean>(false);
-  const activeSegmentRef = useRef<CorridorSegmentData | null>(null);
 
   // View & Render Engine Settings
-  const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium' | 'webgpu'>(
-    WebGPUPointCloudRenderer.isSupported() ? 'webgpu' : 'potree'
-  );
-  const [pointBudget, setPointBudget] = useState<number>(5000000); // 默认 500 万点预算
+  const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium'>('potree');
+  const [pointBudget, setPointBudget] = useState<number>(400000); // 默认 40 万点预算（性能优先）
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
-  const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('square');
+  const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('circle');
   const [useRTC, setUseRTC] = useState<boolean>(true); // Cesium RTC Relative-to-Center
   const [useEDL, setUseEDL] = useState<boolean>(false); // Eye-Dome Lighting（性能开销大，默认关闭）
   const [colorMode, setColorMode] = useState<'power_highlight' | 'rgb' | 'class' | 'height' | 'intensity' | 'danger'>('power_highlight');
@@ -2943,9 +2919,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     if (!activeSegmentId) return allSegments[0] || null;
     return allSegments.find((s) => s.id === activeSegmentId) || allSegments[0] || null;
   }, [allSegments, activeSegmentId]);
-  pointSizeRef.current = pointSize;
-  patrollingRef.current = isPatrolling;
-  activeSegmentRef.current = activeSegment;
 
   const activeCondition = results.find((r) => r.conditionId === selectedConditionId) || results[0];
 
@@ -3287,7 +3260,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         uColorMode: { value: modeMap[colorMode] ?? 4 },
         uHasColor: { value: hasColor ? 1 : 0 },
         uSpanZ: { value: spanZ > 0 ? spanZ : 35 },
-        uMaxPointSize: { value: 24 },
         uClassLut: { value: buildClassLutTexture(visibleClasses) },
       },
       vertexShader: `
@@ -3299,7 +3271,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         varying float vIntensity;
         varying float vHeight;
         uniform float uPointSize;
-        uniform float uMaxPointSize;
         void main() {
           vColor = color;
           vClass = classification;
@@ -3307,7 +3278,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           vHeight = position.y;
           vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
           gl_Position = projectionMatrix * mvPosition;
-          gl_PointSize = clamp(uPointSize * (280.0 / -mvPosition.z), 1.0, uMaxPointSize);
+          gl_PointSize = clamp(uPointSize * (280.0 / -mvPosition.z), 1.0, 32.0);
           vDepth = -mvPosition.z;
         }
       `,
@@ -3383,7 +3354,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         }
       `,
       vertexColors: true,
-      transparent: false,
+      transparent: true,
       depthWrite: true,
     });
     return material;
@@ -3394,10 +3365,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     if (!isOpen || !containerRef.current) return;
 
     const container = containerRef.current;
-    if (renderEngine === 'webgpu' && !WebGPUPointCloudRenderer.isSupported()) {
-      setRenderEngine('potree');
-      return;
-    }
     const width = container.clientWidth;
     const height = container.clientHeight;
 
@@ -3501,39 +3468,17 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     // 2. Potree & Three.js WebGL High Performance Renderer
     const scene = new THREE.Scene();
     sceneRef.current = scene;
-    scene.background = renderEngine === 'webgpu' ? null : new THREE.Color(0x020617);
+    scene.background = new THREE.Color(0x020617);
 
     const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 20000);
     cameraRef.current = camera;
     camera.position.set(0, 45, (activeSegment?.length || 400) * 0.85);
 
-    const useWebGPU = renderEngine === 'webgpu' && WebGPUPointCloudRenderer.isSupported();
-    let webgpuCanvas: HTMLCanvasElement | null = null;
-    if (useWebGPU) {
-      webgpuCanvas = document.createElement('canvas');
-      webgpuCanvas.style.cssText =
-        'position:absolute;inset:0;width:100%;height:100%;z-index:0;background:#020617;';
-      container.appendChild(webgpuCanvas);
-      webgpuCanvas.width = width;
-      webgpuCanvas.height = height;
-      webgpuCanvasRef.current = webgpuCanvas;
-    }
-
-    const renderer = new THREE.WebGLRenderer({
-      antialias: false,
-      alpha: true,
-      preserveDrawingBuffer: useWebGPU,
-      powerPreference: 'high-performance',
-    });
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
     renderer.setSize(width, height);
-    renderer.setPixelRatio(1);
-    renderer.setClearColor(0x000000, renderEngine === 'webgpu' ? 0 : 1);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     rendererRef.current = renderer;
     container.appendChild(renderer.domElement);
-    if (useWebGPU) {
-      renderer.domElement.style.cssText =
-        'position:absolute;inset:0;width:100%;height:100%;z-index:1;background:transparent;';
-    }
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -3547,64 +3492,20 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     dirLight.position.set(200, 400, 200);
     scene.add(dirLight);
 
-    // Animation Loop: paused when idle, restarted on interaction/data/patrol.
+    // Animation Loop
     let animId: number;
     let needsRender = true;
-    let running = false;
-    let frameCount = 0;
-    let lastFpsTime = performance.now();
-    let lastFrameTime = performance.now();
-    const frameTimes: number[] = [];
-
-    const startLoop = () => {
-      if (running) return;
-      running = true;
-      animate();
-    };
-    startRenderLoopRef.current = startLoop;
-
-    const markRender = () => { needsRender = true; startLoop(); };
+    const markRender = () => { needsRender = true; };
     controls.addEventListener('change', markRender);
-
-    const applyAdaptiveQuality = (avgMs: number) => {
-      const pr = renderer.getPixelRatio();
-      if (avgMs > 24 && pr > 0.6) {
-        renderer.setPixelRatio(0.6);
-      } else if (avgMs > 16 && pr > 0.75 && !isInteractingRef.current && !patrollingRef.current) {
-        renderer.setPixelRatio(0.75);
-      } else if (avgMs < 10 && pr < 1 && !isInteractingRef.current && !patrollingRef.current) {
-        renderer.setPixelRatio(1);
-      }
-    };
-
     const animate = () => {
-      if (!running) return;
       animId = requestAnimationFrame(animate);
 
-      const now = performance.now();
-      frameCount++;
-      if (now - lastFpsTime >= 500) {
-        const fps = (frameCount * 1000) / (now - lastFpsTime);
-        const fpsEl = document.getElementById('ota-hud-fps');
-        if (fpsEl) fpsEl.textContent = `${Math.round(fps)}`;
-        const ptsEl = document.getElementById('ota-hud-points');
-        if (ptsEl) {
-          const geom = geometryRef.current;
-          const count = geom?.index ? geom.index.count : geom?.attributes.position?.count || 0;
-          ptsEl.textContent = count.toLocaleString();
-        }
-        frameCount = 0;
-        lastFpsTime = now;
-      }
-
-      const patrolling = patrollingRef.current;
-      const seg = activeSegmentRef.current;
-      if (patrolling && seg) {
+      if (isPatrolling && activeSegment) {
         patrolProgressRef.current += 0.002;
         if (patrolProgressRef.current > 1) patrolProgressRef.current = 0;
 
         const p = patrolProgressRef.current;
-        const camX = (p - 0.5) * seg.length;
+        const camX = (p - 0.5) * activeSegment.length;
         const camY = 35 + Math.sin(p * Math.PI * 2) * 5;
         const camZ = 45 + Math.cos(p * Math.PI * 2) * 20;
 
@@ -3613,63 +3514,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       }
 
       controls.update();
-      if (!needsRender && !patrolling) {
-        const fpsEl = document.getElementById('ota-hud-fps');
-        if (fpsEl) fpsEl.textContent = '待机';
-        running = false;
-        cancelAnimationFrame(animId);
-        return;
-      }
+      if (!needsRender && !isPatrolling) return;
       needsRender = false;
       renderer.render(scene, camera);
-      if (webgpuRendererRef.current) {
-        camera.updateMatrixWorld();
-        camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
-        webgpuRendererRef.current.setCamera(camera.projectionMatrix, camera.matrixWorldInverse, camera.position);
-        webgpuRendererRef.current.render();
-      }
-
-      const dt = now - lastFrameTime;
-      lastFrameTime = now;
-      frameTimes.push(dt);
-      if (frameTimes.length > 60) frameTimes.shift();
-      if (frameTimes.length >= 10) {
-        const avg = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
-        applyAdaptiveQuality(avg);
-      }
     };
 
-    startLoop();
-
-    // Interaction: drop backdrop blur, shrink points and render resolution while dragging.
-    const beginInteraction = () => {
-      isInteractingRef.current = true;
-      document.body.classList.add('ota-interacting');
-      renderer.setPixelRatio(0.75);
-      const mat = pointCloudMaterialRef.current;
-      if (mat) {
-        mat.uniforms.uPointSize.value = 1;
-        mat.uniforms.uMaxPointSize.value = 1;
-      }
-      startLoop();
-    };
-    const endInteraction = () => {
-      isInteractingRef.current = false;
-      document.body.classList.remove('ota-interacting');
-      if (!patrollingRef.current) renderer.setPixelRatio(1);
-      const mat = pointCloudMaterialRef.current;
-      if (mat) {
-        mat.uniforms.uPointSize.value = pointSizeRef.current;
-        mat.uniforms.uMaxPointSize.value = maxPointSizeRef.current;
-      }
-    };
-    const onPointerUp = () => {
-      if (interactionTimerRef.current !== null) window.clearTimeout(interactionTimerRef.current);
-      interactionTimerRef.current = window.setTimeout(endInteraction, 150);
-    };
-    container.addEventListener('pointerdown', beginInteraction);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerUp);
+    animate();
 
     const handleResize = () => {
       if (!containerRef.current || !renderer || !camera) return;
@@ -3678,7 +3528,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
-      webgpuRendererRef.current?.resize(w, h, 1);
     };
 
     window.addEventListener('resize', handleResize);
@@ -3687,33 +3536,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       cancelAnimationFrame(animId);
       controls.removeEventListener('change', markRender);
       window.removeEventListener('resize', handleResize);
-      container.removeEventListener('pointerdown', beginInteraction);
-      window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', onPointerUp);
-      if (interactionTimerRef.current !== null) window.clearTimeout(interactionTimerRef.current);
-      document.body.classList.remove('ota-interacting');
-      document.body.classList.remove('ota-patrolling');
-      webgpuRendererRef.current?.dispose();
-      webgpuRendererRef.current = null;
-      if (webgpuCanvasRef.current) {
-        webgpuCanvasRef.current.remove();
-        webgpuCanvasRef.current = null;
-      }
       renderer.dispose();
     };
   }, [isOpen, activeSegment?.id, renderEngine]);
-
-  // Patrol mode: lower resolution and disable backdrop blur for continuous motion.
-  useEffect(() => {
-    if (isPatrolling) {
-      document.body.classList.add('ota-patrolling');
-      rendererRef.current?.setPixelRatio(0.6);
-      startRenderLoopRef.current();
-    } else {
-      document.body.classList.remove('ota-patrolling');
-      if (!isInteractingRef.current) rendererRef.current?.setPixelRatio(1);
-    }
-  }, [isPatrolling]);
 
   // Single-draw runtime point cloud renderer (RuntimeViewerDX11 style):
   // geometry is built once per segment; display settings only touch uniforms/LUT/index.
@@ -3754,77 +3579,18 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const total = rawClassIds.length;
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(rawPositions, 3));
-    const colorU8 = new Uint8Array(rawPositions.length);
-    if (rawColors && rawColors.length) {
-      for (let i = 0; i < rawPositions.length; i++) {
-        colorU8[i] = Math.min(255, Math.max(0, Math.round(rawColors[i] * 255)));
-      }
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colorU8, 3, true));
-
-    const clsAttr = new Uint8Array(total);
+    geometry.setAttribute(
+      'color',
+      new THREE.BufferAttribute(rawColors && rawColors.length ? rawColors : new Float32Array(rawPositions.length), 3)
+    );
+    const clsAttr = new Float32Array(total);
     for (let i = 0; i < total; i++) clsAttr[i] = rawClassIds[i];
-    geometry.setAttribute('classification', new THREE.BufferAttribute(clsAttr, 1, false));
-
-    const srcInt = rawIntensities && rawIntensities.length ? rawIntensities : new Float32Array(total).fill(0.5);
-    const intU16 = new Uint16Array(total);
-    for (let i = 0; i < total; i++) {
-      intU16[i] = Math.min(65535, Math.max(0, Math.round(srcInt[i] * 65535)));
-    }
-    geometry.setAttribute('intensity', new THREE.BufferAttribute(intU16, 1, true));
+    geometry.setAttribute('classification', new THREE.BufferAttribute(clsAttr, 1));
+    geometry.setAttribute(
+      'intensity',
+      new THREE.BufferAttribute(rawIntensities && rawIntensities.length ? rawIntensities : new Float32Array(total).fill(0.5), 1)
+    );
     geometryRef.current = geometry;
-
-    if (renderEngine === 'webgpu') {
-      // Invisible picking proxy: reuses the same geometry/index so existing
-      // raycaster code keeps working while the real cloud is drawn via WebGPU.
-      const pickingMesh = new THREE.Points(geometry, new THREE.PointsMaterial({ size: 0.01 }));
-      pickingMesh.visible = false;
-      pointCloudMeshRef.current = pickingMesh;
-      pointCloudMaterialRef.current = null;
-      const canvas = webgpuCanvasRef.current;
-      if (!canvas) {
-        setRenderEngine('potree');
-        return;
-      }
-      if (canvas) {
-        webgpuRendererRef.current?.dispose();
-        webgpuRendererRef.current = null;
-        const wgData = {
-          positions: rawPositions,
-          colors: rawColors || null,
-          classIds: rawClassIds,
-          intensities: rawIntensities,
-          spanZ,
-          pointCount: total,
-        };
-        const wgStyle = {
-          colorMode,
-          visibleClasses,
-          classColors: buildClassColorArray(),
-          pointSize,
-          maxPointSize:
-            pointBudget >= 5000000 ? 8 : pointBudget >= 2000000 ? 12 : pointBudget >= 1000000 ? 16 : 24,
-          pointShape,
-          pointBudget,
-          pointDensity,
-          spanZ,
-          dangerHeight: spanZ * 0.6,
-          hasColor: Boolean(rawColors && rawColors.length),
-        };
-        (async () => {
-          try {
-            const renderer = await WebGPUPointCloudRenderer.create(canvas, wgData, wgStyle);
-            webgpuRendererRef.current = renderer;
-            console.info('[WebGPU] point cloud renderer active:', renderer.adapterInfo);
-            controlsRef.current?.dispatchEvent({ type: 'change' });
-          } catch (err) {
-            console.warn('WebGPU renderer init failed, falling back to WebGL:', err);
-            setRenderEngine('potree');
-          }
-        })();
-      }
-      return;
-    }
 
     const material = createRuntimeViewerMaterial(
       pointSize,
@@ -3841,7 +3607,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const pointCloudMesh = new THREE.Points(geometry, material);
     pointCloudMeshRef.current = pointCloudMesh;
     scene.add(pointCloudMesh);
-    controlsRef.current?.dispatchEvent({ type: 'change' });
 
     if (controlsRef.current && cameraRef.current && realData) {
       const centerY = spanZ / 3;
@@ -3849,34 +3614,15 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     }
   }, [isOpen, activeSegment?.id, renderEngine, dataRevision]);
 
-  // Display settings only update shader uniforms/LUT (no geometry or index rebuild).
+  // Display settings only update shader uniforms/LUT and the sampling index buffer.
   useEffect(() => {
     if (!isOpen || renderEngine === 'cesium') return;
-    if (renderEngine === 'webgpu') {
-      const spanZ = activeSegment
-        ? loadedPointCloudMapRef.current[activeSegment.id]?.spanZ || 35
-        : 35;
-      webgpuRendererRef.current?.setStyle({
-        colorMode,
-        visibleClasses,
-        pointSize,
-        maxPointSize:
-          pointBudget >= 5000000 ? 8 : pointBudget >= 2000000 ? 12 : pointBudget >= 1000000 ? 16 : 24,
-        pointShape,
-        pointBudget,
-        pointDensity,
-        spanZ,
-        dangerHeight: spanZ * 0.6,
-        hasColor: Boolean(
-          activeSegment && loadedPointCloudMapRef.current[activeSegment.id]?.colors?.length
-        ),
-      });
-      return;
-    }
     const material = pointCloudMaterialRef.current;
-    if (!material) return;
+    const geometry = geometryRef.current;
+    if (!material || !geometry) return;
 
     const realData = activeSegment ? loadedPointCloudMapRef.current[activeSegment.id] : null;
+    const total = realData ? realData.classIds.length : geometry.attributes.classification?.count || 0;
     const modeMap: Record<string, number> = { rgb: 0, class: 1, height: 2, intensity: 3, power_highlight: 4, danger: 5 };
 
     const oldLut = material.uniforms.uClassLut.value as THREE.Texture;
@@ -3889,19 +3635,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     material.uniforms.uPointSize.value = pointSize;
     material.uniforms.uEdlStrength.value = renderEngine === 'potree' && useEDL ? edlStrength : 0;
     material.uniforms.uShapeType.value = pointShape === 'circle' ? 1 : pointShape === 'paraboloid' ? 2 : 0;
-    material.uniforms.uMaxPointSize.value =
-      pointBudget >= 5000000 ? 8 : pointBudget >= 2000000 ? 12 : pointBudget >= 1000000 ? 16 : 24;
-    maxPointSizeRef.current = material.uniforms.uMaxPointSize.value as number;
-  }, [isOpen, activeSegment?.id, renderEngine, colorMode, visibleClasses, pointSize, useEDL, edlStrength, pointShape, pointBudget, dataRevision]);
-
-  // Budget / density changes only rebuild the lightweight sampling index buffer.
-  useEffect(() => {
-    if (!isOpen || renderEngine === 'cesium') return;
-    const geometry = geometryRef.current;
-    if (!geometry) return;
-
-    const realData = activeSegment ? loadedPointCloudMapRef.current[activeSegment.id] : null;
-    const total = realData ? realData.classIds.length : geometry.attributes.classification?.count || 0;
 
     if (total > 0) {
       const targetBudget = Math.min(total, pointBudget);
@@ -3914,7 +3647,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       geometry.setIndex(new THREE.BufferAttribute(indices, 1));
       geometry.setDrawRange(0, count);
     }
-  }, [isOpen, activeSegment?.id, renderEngine, pointDensity, pointBudget, dataRevision]);
+  }, [isOpen, activeSegment?.id, renderEngine, colorMode, visibleClasses, pointSize, pointDensity, pointBudget, useEDL, edlStrength, pointShape, dataRevision]);
 
   // Manual tagging / brush updates classIds on the CPU; sync only the attribute.
   useEffect(() => {
@@ -3924,12 +3657,9 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     if (!geometry || !realData) return;
     const attr = geometry.getAttribute('classification');
     if (!attr) return;
-    const arr = attr.array as Uint8Array;
+    const arr = attr.array as Float32Array;
     for (let i = 0; i < realData.classIds.length; i++) arr[i] = realData.classIds[i];
     attr.needsUpdate = true;
-    if (renderEngine === 'webgpu') {
-      webgpuRendererRef.current?.updateClassData(realData.classIds);
-    }
   }, [detectionVersion]);
 
 
@@ -4145,7 +3875,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     let isDraggingBox = false;
 
     const getPtMesh = () => {
-      if (pointCloudMeshRef.current) return pointCloudMeshRef.current;
       let ptMesh: THREE.Points | null = null;
       scene.traverse((obj) => {
         if (obj instanceof THREE.Points) ptMesh = obj;
@@ -4876,9 +4605,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                   <span>HUD 遥测姿态</span>
                 </div>
                 <div className="flex items-center gap-1">
-                  <span className="text-emerald-400 text-[9px] bg-emerald-500/20 px-1.5 py-0.2 rounded border border-emerald-500/30">
-                    <span id="ota-hud-fps">60</span> FPS · <span id="ota-hud-points">0</span>点
-                  </span>
+                  <span className="text-emerald-400 text-[9px] bg-emerald-500/20 px-1.5 py-0.2 rounded border border-emerald-500/30">60 FPS</span>
                   <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${isHudExpanded ? 'rotate-180' : ''}`} />
                 </div>
               </div>
@@ -5300,7 +5027,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
               {/* Render Engine Selector */}
               <div className="space-y-1.5">
                 <span className="text-[11px] text-slate-400 font-bold block">1. 三维渲染引擎:</span>
-                <div className="grid grid-cols-3 gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+                <div className="grid grid-cols-2 gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
                   <button
                     onClick={() => setRenderEngine('potree')}
                     className={`py-1.5 rounded-lg text-center font-bold cursor-pointer transition-all ${
@@ -5320,16 +5047,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                     }`}
                   >
                     Cesium 地球
-                  </button>
-                  <button
-                    onClick={() => setRenderEngine('webgpu')}
-                    className={`py-1.5 rounded-lg text-center font-bold cursor-pointer transition-all ${
-                      renderEngine === 'webgpu'
-                        ? 'bg-fuchsia-600 text-white shadow-md border border-fuchsia-400'
-                        : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    WebGPU
                   </button>
                 </div>
               </div>
