@@ -3486,8 +3486,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     container.appendChild(renderer.domElement);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
+    controls.enableDamping = false; // direct camera follow, avoids sticky feel
+    controls.rotateSpeed = 1.2;
     controls.maxPolarAngle = Math.PI / 2 + 0.1;
     controlsRef.current = controls;
 
@@ -3519,12 +3519,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       }
 
       controls.update();
+      if (!needsRender && !isPatrolling) return;
+      needsRender = false;
       if (renderEngine === 'octree') {
         octreeLODRendererRef.current?.preloadStep(24);
         octreeLODRendererRef.current?.update(camera, height);
       }
-      if (!needsRender && !isPatrolling) return;
-      needsRender = false;
       renderer.render(scene, camera);
     };
 
@@ -3626,6 +3626,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         pointSize,
         pointBudget
       );
+      controlsRef.current?.dispatchEvent({ type: 'change' });
 
       // Hidden picking proxy: full positions + budget-sampled index, so the
       // existing raycaster/annotation code keeps working unchanged.
