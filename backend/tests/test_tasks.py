@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session  # noqa: E402
 
 from app.db import Base  # noqa: E402
 from app.models import LasFile, Task, TaskStatus  # noqa: E402
-from app.storage import Storage  # noqa: E402
+from app.storage import FALLBACK_DIR, Storage  # noqa: E402
 from app.tasks import process_las_task  # noqa: E402
 
 
@@ -55,7 +55,7 @@ def test_process_las_task(tmp_path):
         assert task.result_bin_key.startswith("result/")
         assert task.result_potree_dir == task_id
         potree_meta = (
-            Path(os.environ["MINIO_FALLBACK_DIR"]) / "potree" / task_id / "metadata.json"
+            FALLBACK_DIR / "potree" / task_id / "metadata.json"
         )
         assert potree_meta.exists(), "PotreeConverter 未生成 metadata.json"
     shutil.rmtree(os.environ["MINIO_FALLBACK_DIR"], ignore_errors=True)

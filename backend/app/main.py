@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
+from starlette.staticfiles import StaticFiles as StarletteStaticFiles
 
 from app.db import init_db
 from app.routers import annotations
@@ -33,9 +34,22 @@ app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["tasks"])
 app.include_router(annotations.router, prefix="/api/annotations", tags=["annotations"])
 app.include_router(ws_module.router)
+
+
+class InlineBinStaticFiles(StarletteStaticFiles):
+    """Serve .bin with inline disposition so browsers never offer to download them."""
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        resp = super().file_response(full_path, stat_result, scope, status_code)
+        if str(full_path).lower().endswith(".bin"):
+            resp.headers["Content-Disposition"] = "inline"
+            resp.headers["X-Content-Type-Options"] = "nosniff"
+        return resp
+
+
 app.mount(
     "/api/potree",
-    StaticFiles(directory=str(Path(FALLBACK_DIR) / "potree"), check_dir=False),
+    InlineBinStaticFiles(directory=str(Path(FALLBACK_DIR) / "potree"), check_dir=False),
     name="potree",
 )
 

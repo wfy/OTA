@@ -3616,6 +3616,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const onPointerDown = () => {
       document.body.classList.add('ota-interacting');
       renderer.setPixelRatio(0.75);
+      needsRender = true;
       if (interactionTimer !== null) window.clearTimeout(interactionTimer);
     };
     const onPointerUp = () => {
@@ -3623,6 +3624,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       interactionTimer = window.setTimeout(() => {
         document.body.classList.remove('ota-interacting');
         renderer.setPixelRatio(1);
+        needsRender = true;
       }, 150);
     };
     container.addEventListener('pointerdown', onPointerDown);
@@ -3752,7 +3754,11 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       geometryRef.current = proxyGeom;
       pointCloudMeshRef.current = proxy;
       pointCloudMaterialRef.current = null;
-      if (!pendingResult?.potreeBaseUrl) {
+      if (!pendingResult) {
+        // upload not finished yet; effect reruns when pendingResult appears
+        return;
+      }
+      if (!pendingResult.potreeBaseUrl) {
         setRenderEngine(realData?.octree ? 'octree' : 'potree');
         return;
       }
