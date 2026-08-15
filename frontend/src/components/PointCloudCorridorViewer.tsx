@@ -2,18 +2,14 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import * as THREE from 'three';
 import proj4 from 'proj4';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import * as Cesium from 'cesium';
-import 'cesium/Build/Cesium/Widgets/widgets.css';
+// Cesium and potree-core are loaded on demand (dynamic import) so their ~3MB
+// footprints stay out of the main chunk: the default engine is plain Three.js,
+// and Cesium is only initialized when the user switches to the Cesium engine.
 import { createPortal } from 'react-dom';
 import type { ParsedPointCloudData } from '../workers/pointCloudParser';
 import type { OctreeData } from '../workers/octreeBuilder';
 import { OctreeLODRenderer } from '../renderers/OctreeLODRenderer';
-import {
-  Potree,
-  PointColorType,
-  PointSizeType,
-  PointShape as PotreeShape,
-} from 'potree-core';
+import type { ManualTowerTag, ManualWireTag, ManualInsulatorTag } from '../classification/classificationCore';
 
 // Parse point cloud data in a Web Worker so the main thread never blocks.
 // Falls back to the legacy in-thread parser if workers are unavailable.
@@ -110,6 +106,7 @@ import {
 } from 'lucide-react';
 import { TowerParameters, Conductor, ConditionCalcResult } from '../types';
 import { useAppStore } from '../store/useAppStore';
+import { api } from '../api/client';
 import { generateCatenaryCurve } from '../utils/conductorPhysics';
 
 // Voltage Level Phase Presets for Powerline Conductors (Digital Green Valley / LiDAR3D Industry Standard)
@@ -430,521 +427,6 @@ export function createCesiumPointCloudMaterial(pointSize: number, useEDL: boolea
     transparent: true,
     depthWrite: true,
   });
-}
-
-export interface ManualTowerTag {
-  id: string;
-  name: string;
-  upperArmPoint: { x: number; y: number; z: number }; // 上横担位置点
-  lowerArmPoint: { x: number; y: number; z: number }; // 下横担位置点
-  radius: number; // 杆塔包裹半径 (默认 4.5m)
-  pointCount?: number;
-}
-
-export interface ManualWireTag {
-  id: string;
-  name: string;
-  startPoint: { x: number; y: number; z: number }; // 导线起点 A (如杆塔1挂点)
-  endPoint: { x: number; y: number; z: number };   // 导线终点 B (如杆塔2挂点)
-  corridorRadius: number; // 导线检索缓冲区半径 (默认 1.5m)
-  sagRatio: number; // 弧垂下垂因子 (默认 0.03)
-  pointCount?: number;
-}
-
-export interface ManualInsulatorTag {
-  id: string;
-  name: string;
-  type: 'suspension' | 'tension' | 'v_string'; // 悬垂型 | 耐张型 | V型
-  topPoint: { x: number; y: number; z: number };   // 顶端挂点 (横担连接点)
-  bottomPoint: { x: number; y: number; z: number };// 底端挂点 (导线连接点)
-  length: number;  // 绝缘子串长度 (默认 1.8m)
-  radius: number;  // 包裹/伞裙半径 (默认 0.45m)
-  pointCount?: number;
-  towerRefId?: string;
-  confidence?: number;
-}
-
-// Auto-fit Catenary Sag Ratio from Point Cloud Data along 3D Corridor
-export function fitWireSagFromPointCloud(
-  positions: Float32Array,
-  pointCount: number,
-  startPt: { x: number; y: number; z: number },
-  endPt: { x: number; y: number; z: number },
-  corridorRadius: number = 2.5
-): number {
-  if (!positions || pointCount <= 0) return 0.025;
-
-  const ax = startPt.x, ay = startPt.y, az = startPt.z;
-  const bx = endPt.x, by = endPt.y, bz = endPt.z;
-
-  const vx = bx - ax;
-  const vy = by - ay;
-  const vz = bz - az;
-  const vLenSq = vx * vx + vy * vy + vz * vz;
-  const vLen = Math.sqrt(vLenSq);
-
-  if (vLen < 2.0) return 0.025;
-
-  const searchRadius = Math.max(3.0, corridorRadius * 1.5);
-  const searchRadiusSq = searchRadius * searchRadius;
-
-  const sampleSags: number[] = [];
-
-  for (let i = 0; i < pointCount; i++) {
-    const px = positions[i * 3];
-    const py = positions[i * 3 + 1];
-    const pz = positions[i * 3 + 2];
-
-    // Projection parameter t along AB segment
-    const t = ((px - ax) * vx + (py - ay) * vy + (pz - az) * vz) / vLenSq;
-
-    // Filter points in the midspan range (0.08 <= t <= 0.92) to avoid tower structures
-    if (t < 0.08 || t > 0.92) continue;
-
-    // Projected point on 3D straight line
-    const projX = ax + t * vx;
-    const projY = ay + t * vy;
-    const projZ = az + t * vz;
-
-    // Horizontal distance to straight line
-    const dx = px - projX;
-    const dz = pz - projZ;
-    const dist2D = dx * dx + dz * dz;
-
-    if (dist2D <= searchRadiusSq) {
-      // Sag drop below linear interpolation Y
-      const deltaY = projY - py;
-
-      // Ensure point is below straight line and not ground/extreme trees
-      if (deltaY > 0.05) {
-        // Catenary sag drop at parameter t: deltaY = S * 4 * t * (1 - t)
-        // S_i = deltaY / (4 * t * (1 - t))
-        const denom = 4 * t * (1 - t);
-        if (denom > 0.1) {
-          const estimatedS = deltaY / denom;
-          // Filter physical range: 0.1m <= sag <= 0.12 * vLen (max 12% of span)
-          if (estimatedS >= 0.1 && estimatedS <= vLen * 0.12) {
-            sampleSags.push(estimatedS);
-          }
-        }
-      }
-    }
-  }
-
-  if (sampleSags.length < 3) {
-    // Fallback if point cloud density in corridor is too sparse
-    return 0.025;
-  }
-
-  // Sort candidate sag depths and take 65th percentile to robustly capture conductor points
-  sampleSags.sort((a, b) => a - b);
-  const targetIdx = Math.floor(sampleSags.length * 0.65);
-  const fittedSagDepth = sampleSags[targetIdx];
-
-  const fittedRatio = fittedSagDepth / vLen;
-  // Clamp to standard power conductor range [0.005, 0.08]
-  return Number(Math.max(0.005, Math.min(0.08, fittedRatio)).toFixed(4));
-}
-
-// Recompute point cloud class classifications based on manual tower tags, manual wire tags, and manual insulator tags
-export function recomputeManualClassificationsData(
-  positions: Float32Array,
-  classIds: Uint8Array,
-  pointCount: number,
-  towers: ManualTowerTag[],
-  wires: ManualWireTag[],
-  insulators?: ManualInsulatorTag[]
-): { towerCount: number; wireCount: number; insulatorCount: number } {
-  // Reset existing power corridor classifications (14: Wires, 15: Towers, 16: Insulators) back to default 1 (Unclassified)
-  for (let i = 0; i < pointCount; i++) {
-    if (classIds[i] === 14 || classIds[i] === 15 || classIds[i] === 16) {
-      classIds[i] = 1;
-    }
-  }
-
-  let totalTowerPts = 0;
-  let totalWirePts = 0;
-  let totalInsulatorPts = 0;
-
-  // Apply Insulator Tags (Class 16 - Electric Magenta)
-  (insulators || []).forEach((ins) => {
-    const ax = ins.topPoint.x, ay = ins.topPoint.y, az = ins.topPoint.z;
-    const bx = ins.bottomPoint.x, by = ins.bottomPoint.y, bz = ins.bottomPoint.z;
-
-    const vx = bx - ax;
-    const vy = by - ay;
-    const vz = bz - az;
-    const vLenSq = vx * vx + vy * vy + vz * vz;
-    // Exactly 0.5m radius cylinder classification around the insulator straight axis as requested
-    const rSq = 0.5 * 0.5;
-
-    let count = 0;
-    for (let i = 0; i < pointCount; i++) {
-      const idx = i * 3;
-      const px = positions[idx];
-      const py = positions[idx + 1];
-      const pz = positions[idx + 2];
-
-      let t = vLenSq < 1e-6 ? 0 : ((px - ax) * vx + (py - ay) * vy + (pz - az) * vz) / vLenSq;
-      if (t < -0.1) t = -0.1;
-      if (t > 1.1) t = 1.1;
-
-      const projX = ax + t * vx;
-      const projY = ay + t * vy;
-      const projZ = az + t * vz;
-
-      const dx = px - projX;
-      const dy = py - projY;
-      const dz = pz - projZ;
-
-      if (dx * dx + dy * dy + dz * dz <= rSq) {
-        classIds[i] = 16; // Insulator String (Electric Magenta)
-        count++;
-      }
-    }
-    ins.pointCount = count;
-    totalInsulatorPts += count;
-  });
-
-  // Apply Structured Tower Tags (3D 轴线线段距离计算)
-  towers.forEach((tower) => {
-    const ax = tower.lowerArmPoint.x, ay = tower.lowerArmPoint.y, az = tower.lowerArmPoint.z;
-    const bx = tower.upperArmPoint.x, by = tower.upperArmPoint.y, bz = tower.upperArmPoint.z;
-
-    const vx = bx - ax;
-    const vy = by - ay;
-    const vz = bz - az;
-    const vLenSq = vx * vx + vy * vy + vz * vz;
-    const vLen = Math.sqrt(vLenSq) || 1;
-    const rSq = tower.radius * tower.radius;
-
-    let count = 0;
-    for (let i = 0; i < pointCount; i++) {
-      const idx = i * 3;
-      const px = positions[idx];
-      const py = positions[idx + 1];
-      const pz = positions[idx + 2];
-
-      let distSq = 0;
-      if (vLenSq < 1e-6) {
-        const dx = px - ax;
-        const dy = py - ay;
-        const dz = pz - az;
-        distSq = dx * dx + dy * dy + dz * dz;
-      } else {
-        let t = ((px - ax) * vx + (py - ay) * vy + (pz - az) * vz) / vLenSq;
-        const tMin = -3.0 / vLen;
-        const tMax = 1.0 + 2.0 / vLen;
-        if (t < tMin) t = tMin;
-        if (t > tMax) t = tMax;
-
-        const projX = ax + t * vx;
-        const projY = ay + t * vy;
-        const projZ = az + t * vz;
-
-        const dx = px - projX;
-        const dy = py - projY;
-        const dz = pz - projZ;
-        distSq = dx * dx + dy * dy + dz * dz;
-      }
-
-      if (distSq <= rSq) {
-        classIds[i] = 15; // Transmission Tower (Amber Gold)
-        count++;
-      }
-    }
-    tower.pointCount = count;
-    totalTowerPts += count;
-  });
-
-  // Apply Conductor Wire Tags (双端点 A-B 确定导线弧垂通道)
-  wires.forEach((wire) => {
-    const ax = wire.startPoint.x, ay = wire.startPoint.y, az = wire.startPoint.z;
-    const bx = wire.endPoint.x, by = wire.endPoint.y, bz = wire.endPoint.z;
-
-    const vx = bx - ax;
-    const vy = by - ay;
-    const vz = bz - az;
-    const vLenSq = vx * vx + vy * vy + vz * vz;
-    const vLen = Math.sqrt(vLenSq);
-
-    if (vLenSq < 1e-6) return;
-
-    const rSq = wire.corridorRadius * wire.corridorRadius;
-    let count = 0;
-
-    for (let i = 0; i < pointCount; i++) {
-      const idx = i * 3;
-      const px = positions[idx];
-      const py = positions[idx + 1];
-      const pz = positions[idx + 2];
-
-      // Projection parameter t along segment AB
-      let t = ((px - ax) * vx + (py - ay) * vy + (pz - az) * vz) / vLenSq;
-      if (t < 0) t = 0;
-      if (t > 1) t = 1;
-
-      // Projected point on segment AB with catenary sag
-      let projX = ax + t * vx;
-      let projY = ay + t * vy;
-      let projZ = az + t * vz;
-
-      if (wire.sagRatio > 0) {
-        projY -= wire.sagRatio * vLen * 4 * t * (1 - t);
-      }
-
-      const dx = px - projX;
-      const dy = py - projY;
-      const dz = pz - projZ;
-
-      if (dx * dx + dy * dy + dz * dz <= rSq) {
-        classIds[i] = 14; // Power Conductor (Neon Cyan)
-        count++;
-      }
-    }
-    wire.pointCount = count;
-    totalWirePts += count;
-  });
-
-  return { towerCount: totalTowerPts, wireCount: totalWirePts, insulatorCount: totalInsulatorPts };
-}
-
-function computeEigenvalues3x3(
-  cxx: number, cyy: number, czz: number,
-  cxy: number, cxz: number, cyz: number
-): { l1: number; l2: number; l3: number; vx: number; vy: number; vz: number } {
-  const trace = cxx + cyy + czz;
-  const l1 = Math.max(0, trace);
-  const l2 = l1 * 0.3;
-  const l3 = l1 * 0.1;
-  let vx = cxy + cxz;
-  let vy = cyy + cyz;
-  let vz = cxz + cyz;
-  const len = Math.hypot(vx, vy, vz) || 1;
-  return { l1, l2, l3, vx: vx / len, vy: vy / len, vz: vz / len };
-}
-
-export function detectPowerCorridorFeatures(params: {
-  positions: Float32Array;
-  classIds: Uint8Array;
-  pointCount: number;
-  spanX: number;
-  spanY: number;
-  spanZ: number;
-}) {
-  const { positions, pointCount: count, spanX, spanY, spanZ } = params;
-  const classIds = new Uint8Array(params.classIds);
-
-  let minX = Infinity, maxX = -Infinity;
-  let minY = Infinity, maxY = -Infinity;
-  let minZ = Infinity, maxZ = -Infinity;
-
-  for (let i = 0; i < count; i++) {
-    const x = positions[i * 3];
-    const y = positions[i * 3 + 1];
-    const z = positions[i * 3 + 2];
-    if (x < minX) minX = x;
-    if (x > maxX) maxX = x;
-    if (y < minY) minY = y;
-    if (y > maxY) maxY = y;
-    if (z < minZ) minZ = z;
-    if (z > maxZ) maxZ = z;
-  }
-
-  const dxSpan = maxX - minX || 1;
-  const dzSpan = maxZ - minZ || 1;
-  const spanLength = Math.hypot(dxSpan, dzSpan);
-  const dirUx = dxSpan / spanLength;
-  const dirUz = dzSpan / spanLength;
-
-  const getHAG = (_x: number, y: number, _z: number) => y - minY;
-
-  const getLateralSpanDist = (x: number, z: number) => {
-    const px = x - minX;
-    const pz = z - minZ;
-    const projT = px * dirUx + pz * dirUz;
-    const projX = minX + projT * dirUx;
-    const projZ = minZ + projT * dirUz;
-    const latDist = Math.hypot(x - projX, z - projZ);
-    return { latDist, projT };
-  };
-
-  const vxRes = 2.0;
-  const vxCols = Math.max(1, Math.ceil(dxSpan / vxRes));
-  const vxHeight = Math.max(1, Math.ceil((maxY - minY) / vxRes));
-  const vxRows = Math.max(1, Math.ceil(dzSpan / vxRes));
-  const totalVox3D = vxCols * vxHeight * vxRows;
-
-  const v3Count = new Int32Array(totalVox3D);
-  const v3SumX = new Float32Array(totalVox3D);
-  const v3SumY = new Float32Array(totalVox3D);
-  const v3SumZ = new Float32Array(totalVox3D);
-  const v3SumXX = new Float32Array(totalVox3D);
-  const v3SumYY = new Float32Array(totalVox3D);
-  const v3SumZZ = new Float32Array(totalVox3D);
-  const v3SumXY = new Float32Array(totalVox3D);
-  const v3SumXZ = new Float32Array(totalVox3D);
-  const v3SumYZ = new Float32Array(totalVox3D);
-
-  const pointVoxel3DIdx = new Int32Array(count);
-
-  for (let i = 0; i < count; i++) {
-    const x = positions[i * 3];
-    const y = positions[i * 3 + 1];
-    const z = positions[i * 3 + 2];
-
-    const c = Math.min(vxCols - 1, Math.max(0, Math.floor((x - minX) / vxRes)));
-    const h = Math.min(vxHeight - 1, Math.max(0, Math.floor((y - minY) / vxRes)));
-    const r = Math.min(vxRows - 1, Math.max(0, Math.floor((z - minZ) / vxRes)));
-
-    const vi = (r * vxCols + c) * vxHeight + h;
-    pointVoxel3DIdx[i] = vi;
-
-    v3Count[vi]++;
-    v3SumX[vi] += x;
-    v3SumY[vi] += y;
-    v3SumZ[vi] += z;
-    v3SumXX[vi] += x * x;
-    v3SumYY[vi] += y * y;
-    v3SumZZ[vi] += z * z;
-    v3SumXY[vi] += x * y;
-    v3SumXZ[vi] += x * z;
-    v3SumYZ[vi] += y * z;
-  }
-
-  const vLinearity = new Float32Array(totalVox3D);
-  const vDirY = new Float32Array(totalVox3D);
-  const vAlignSpan = new Float32Array(totalVox3D);
-
-  for (let vi = 0; vi < totalVox3D; vi++) {
-    const h = vi % vxHeight;
-    const rem = Math.floor(vi / vxHeight);
-    const c = rem % vxCols;
-    const r = Math.floor(rem / vxCols);
-
-    let n = 0;
-    let sx = 0, sy = 0, sz = 0;
-    let sxx = 0, syy = 0, szz = 0, sxy = 0, sxz = 0, syz = 0;
-
-    for (let dc = -1; dc <= 1; dc++) {
-      for (let dh = -1; dh <= 1; dh++) {
-        for (let dr = -1; dr <= 1; dr++) {
-          const nc = c + dc;
-          const nh = h + dh;
-          const nr = r + dr;
-
-          if (nc >= 0 && nc < vxCols && nh >= 0 && nh < vxHeight && nr >= 0 && nr < vxRows) {
-            const nVi = (nr * vxCols + nc) * vxHeight + nh;
-            const cnt = v3Count[nVi];
-            if (cnt > 0) {
-              n += cnt;
-              sx += v3SumX[nVi];
-              sy += v3SumY[nVi];
-              sz += v3SumZ[nVi];
-              sxx += v3SumXX[nVi];
-              syy += v3SumYY[nVi];
-              szz += v3SumZZ[nVi];
-              sxy += v3SumXY[nVi];
-              sxz += v3SumXZ[nVi];
-              syz += v3SumYZ[nVi];
-            }
-          }
-        }
-      }
-    }
-
-    if (n < 4) continue;
-
-    const mx = sx / n;
-    const my = sy / n;
-    const mz = sz / n;
-
-    const cxx = (sxx / n) - (mx * mx);
-    const cyy = (syy / n) - (my * my);
-    const czz = (szz / n) - (mz * mz);
-    const cxy = (sxy / n) - (mx * my);
-    const cxz = (sxz / n) - (mx * mz);
-    const cyz = (syz / n) - (my * mz);
-
-    const { l1, l2, l3, vx, vy, vz } = computeEigenvalues3x3(cxx, cyy, czz, cxy, cxz, cyz);
-
-    if (l1 > 1e-6) {
-      vLinearity[vi] = (l1 - l2) / l1;
-      vDirY[vi] = Math.abs(vy);
-      const horizLen = Math.hypot(vx, vz) || 1e-6;
-      const align = Math.abs((vx / horizLen) * dirUx + (vz / horizLen) * dirUz);
-      vAlignSpan[vi] = align;
-    }
-  }
-
-  const detectedTowersList: Array<{
-    id: string;
-    centerX: number;
-    centerY: number;
-    centerZ: number;
-    radius: number;
-    topY: number;
-    pointCount: number;
-  }> = [];
-
-  let wirePointCount = 0;
-  let towerPointCount = 0;
-  let groundPointCount = 0;
-  let vegPointCount = 0;
-
-  for (let i = 0; i < count; i++) {
-    const idx = i * 3;
-    const x = positions[idx];
-    const y = positions[idx + 1];
-    const z = positions[idx + 2];
-
-    const hag = getHAG(x, y, z);
-    const vIdx = pointVoxel3DIdx[i];
-    const { latDist, projT } = getLateralSpanDist(x, z);
-
-    let isTowerPoint = false;
-    for (const tw of detectedTowersList) {
-      const dx = x - tw.centerX;
-      const dz = z - tw.centerZ;
-      if (dx * dx + dz * dz <= tw.radius * tw.radius && y >= tw.centerY - 1.5 && y <= tw.topY + 2.5) {
-        isTowerPoint = true;
-        tw.pointCount++;
-        break;
-      }
-    }
-
-    if (isTowerPoint) {
-      classIds[i] = 15;
-      towerPointCount++;
-    } else if (hag <= 1.8) {
-      classIds[i] = 2;
-      groundPointCount++;
-    } else if (
-      hag >= 3.5 &&
-      latDist <= 14.0 &&
-      projT >= -15.0 && projT <= spanLength + 15.0 &&
-      (
-        (vLinearity[vIdx] >= 0.38 && vDirY[vIdx] <= 0.68) ||
-        (hag >= 4.5 && latDist <= 6.0 && vLinearity[vIdx] >= 0.25) ||
-        (hag >= 6.0 && latDist <= 4.0)
-      )
-    ) {
-      classIds[i] = 14;
-      wirePointCount++;
-    } else {
-      classIds[i] = 5;
-      vegPointCount++;
-    }
-  }
-
-  return {
-    classIds,
-    towers: detectedTowersList,
-    wirePointCount,
-    towerPointCount,
-    groundPointCount,
-    vegPointCount,
-  };
 }
 
 export interface RawPointCloudData {
@@ -1762,19 +1244,26 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
-  const cesiumViewerRef = useRef<Cesium.Viewer | null>(null);
+  const cesiumViewerRef = useRef<any | null>(null);
   const pointCloudMeshRef = useRef<THREE.Points | null>(null);
   const pointCloudMaterialRef = useRef<THREE.ShaderMaterial | null>(null);
   const geometryRef = useRef<THREE.BufferGeometry | null>(null);
   const octreeLODRendererRef = useRef<OctreeLODRenderer | null>(null);
-  const potreeCoreRef = useRef<Potree | null>(null);
+  const potreeCoreRef = useRef<any | null>(null);
   const potreeCloudRef = useRef<any>(null);
+  // potree-core PotreeRenderer (EDL-capable) used by the potree_core engine,
+  // mirroring the official potree/potree example pipeline.
+  const potreeRendererRef = useRef<any | null>(null);
+  // Monotonic token guarding the async potree load: every effect run bumps it,
+  // so a stale loadPointCloud promise (from a previous segment/engine switch)
+  // can detect it lost the race and dispose instead of hijacking the scene.
+  const potreeLoadTokenRef = useRef(0);
 
   // View & Render Engine Settings
   const [renderEngine, setRenderEngine] = useState<'potree' | 'cesium' | 'octree' | 'potree_core'>(
-    'potree'
+    'potree_core'
   );
-  const [pointBudget, setPointBudget] = useState<number>(500000); // 默认 50 万点预算（性能优先）
+  const [pointBudget, setPointBudget] = useState<number>(5000000); // 默认 500 万点预算
   const [edlStrength, setEdlStrength] = useState<number>(1.2);
   const [pointShape, setPointShape] = useState<'circle' | 'square' | 'paraboloid'>('circle');
   const [useRTC, setUseRTC] = useState<boolean>(true); // Cesium RTC Relative-to-Center
@@ -1784,7 +1273,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const [detectionNotice, setDetectionNotice] = useState<string | null>(null);
   const [detectionVersion, setDetectionVersion] = useState<number>(0);
   const [dataRevision, setDataRevision] = useState<number>(0);
-  const [pointSize, setPointSize] = useState<number>(0.5);
+  const [pointSize, setPointSize] = useState<number>(1.0);
   const [pointDensity, setPointDensity] = useState<number>(100); // 10% - 100%
   const [showAtmosphere, setShowAtmosphere] = useState<boolean>(true);
   const [isDisplaySettingsOpen, setIsDisplaySettingsOpen] = useState<boolean>(false);
@@ -1830,14 +1319,25 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   // 3D Point Cloud Picking Target & Wizard State
   const [pickingTarget, setPickingTarget] = useState<'tower_upper' | 'tower_lower' | 'wire_start' | 'wire_end' | 'insulator_top' | 'insulator_bottom' | null>(null);
   const [hoveredCoords, setHoveredCoords] = useState<{ x: number; y: number; z: number } | null>(null);
+  // Latest hover point without triggering React re-renders per pointermove;
+  // the state copy is throttled and only feeds the HUD text.
+  const hoveredCoordsRef = useRef<{ x: number; y: number; z: number } | null>(null);
+  // Guide line / end sphere of the insulator rubberband preview, updated
+  // imperatively on pointer move (no geometry rebuild per move).
+  const guideLineRef = useRef<THREE.Line | null>(null);
+  const guideEndSphereRef = useRef<THREE.Mesh | null>(null);
+  const pStartRef = useRef<{ x: number; y: number; z: number } | null>(null);
   const [wizardState, setWizardState] = useState<{
     mode: 'tower' | 'wire' | 'insulator' | null;
     step: 1 | 2;
     tempPoint: { x: number; y: number; z: number } | null;
   }>({ mode: null, step: 1, tempPoint: null });
 
-  // Classification Filters
-  const [visibleClasses, setVisibleClasses] = useState<number[]>([1, 2, 3, 4, 5, 6, 8, 14, 15, 16]);
+  // Classification Filters — class 0 (unclassified, often tower/interior
+  // points in raw LAS) is shown by default so structures don't vanish; the
+  // potree-core engine renders every class, so keep the LUT-based engines
+  // consistent with it.
+  const [visibleClasses, setVisibleClasses] = useState<number[]>([0, 1, 2, 3, 4, 5, 6, 8, 14, 15, 16]);
 
   // Tree Barrier Safety Analysis States
   const [treeBarrierSafetyRadius, setTreeBarrierSafetyRadius] = useState<number>(2.0); // 安全半径范围，默认 2.0米
@@ -1851,6 +1351,27 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
   // Active Segment ID currently rendered in primary 3D window
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(null);
+
+  // The single-viewer design renders exactly ONE point cloud at a time —
+  // switching segments must unload the old cloud and load the new one.
+  // pendingResult from the parent is derived from `uploads.find(done)` which
+  // always returns the FIRST finished upload, so it stays pinned to the first
+  // segment. Resolve the result for the CURRENT segment instead.
+  const allUploads = useAppStore((s) => s.uploads);
+  const effectiveResult = useMemo(() => {
+    if (!activeSegmentId) return pendingResult ?? null;
+    const done = allUploads.find((u) => u.status === 'done' && u.segmentId === activeSegmentId);
+    if (!done) return null;
+    const key = done.resultBinKey || done.resultKey;
+    if (!key) return null;
+    return {
+      key,
+      url: api.resultUrl(key),
+      name: done.resultBinKey ? `${done.filename}.otabin` : `${done.filename}_sign.las`,
+      segmentId: done.segmentId,
+      potreeBaseUrl: done.potreeDir ? api.potreeBaseUrl(done.potreeDir) : undefined,
+    };
+  }, [allUploads, activeSegmentId, pendingResult]);
   const lastUploadStatus = useAppStore((s) => s.uploads[s.uploads.length - 1]?.status);
 
   // Tree Barrier Analysis Core Function
@@ -1991,14 +1512,88 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     manualTowers: ManualTowerTag[];
     manualWires: ManualWireTag[];
     manualInsulators: ManualInsulatorTag[];
-    classIds: Uint8Array;
+    classIds?: Uint8Array; // only captured by operations that mutate classIds directly (box brush)
   }
   const undoStackRef = useRef<UndoSnapshot[]>([]);
-  const [boxSelectionRect, setBoxSelectionRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  // Box-selection rubber band is driven imperatively through a DOM ref so
+  // pointermove during drag does not trigger React re-renders.
+  const boxSelectionRectRef = useRef<HTMLDivElement | null>(null);
   const [isShiftPressed, setIsShiftPressed] = useState<boolean>(false);
 
+  // Persistent classification Web Worker: all O(N) reclassification loops run
+  // off the main thread so pointer interactions (box brush, tagging, sag fit,
+  // auto detection) never block rendering.
+  const classWorkerRef = useRef<Worker | null>(null);
+  const classWorkerSegmentsRef = useRef<Set<string>>(new Set());
+  const classPendingRef = useRef(new Map<number, (data: unknown) => void>());
+  const classReqSeqRef = useRef(0);
+
+  const ensureClassWorker = (): Worker => {
+    if (!classWorkerRef.current) {
+      const w = new Worker(new URL('../workers/classification.worker.ts', import.meta.url), {
+        type: 'module',
+      });
+      classWorkerRef.current = w;
+      w.onmessage = (ev: MessageEvent) => {
+        const data = ev.data as { requestId: number };
+        const resolve = classPendingRef.current.get(data.requestId);
+        if (resolve) {
+          classPendingRef.current.delete(data.requestId);
+          resolve(data);
+        }
+      };
+      w.onerror = () => {
+        const rejects: Array<(data: unknown) => void> = [];
+        classPendingRef.current.forEach((reject) => rejects.push(reject));
+        classPendingRef.current.clear();
+        rejects.forEach((reject) => reject({ type: 'error', error: 'classification worker crashed' }));
+      };
+    }
+    return classWorkerRef.current;
+  };
+
+  const ensureClassWorkerSegment = (realData: RawPointCloudData, segmentId: string): Worker => {
+    const w = ensureClassWorker();
+    if (!classWorkerSegmentsRef.current.has(segmentId)) {
+      classWorkerSegmentsRef.current.add(segmentId);
+      w.postMessage({
+        type: 'init',
+        requestId: -1,
+        segmentId,
+        positions: realData.positions,
+        classIds: realData.classIds,
+        pointCount: realData.pointCount,
+        spanX: realData.spanX,
+        spanY: realData.spanY,
+        spanZ: realData.spanZ,
+      });
+    }
+    return w;
+  };
+
+  // Resolves with { type: 'error', error } instead of rejecting, so callers
+  // never produce unhandled promise rejections from fire-and-forget handlers.
+  const runClassTask = (segmentId: string, msg: Record<string, unknown>): Promise<Record<string, any>> => {
+    const realData = loadedPointCloudMapRef.current[segmentId];
+    if (!realData) {
+      return Promise.resolve({ type: 'error', error: 'segment not loaded' });
+    }
+    const w = ensureClassWorkerSegment(realData, segmentId);
+    return new Promise<Record<string, any>>((resolve) => {
+      const requestId = ++classReqSeqRef.current;
+      classPendingRef.current.set(requestId, resolve);
+      w.postMessage({ requestId, segmentId, ...msg });
+      window.setTimeout(() => {
+        if (classPendingRef.current.has(requestId)) {
+          classPendingRef.current.delete(requestId);
+          resolve({ type: 'error', error: 'classification worker timeout' });
+        }
+      }, 30000);
+    });
+  };
+
   // Push Snapshot before modification
-  const pushUndoSnapshot = () => {
+  const pushUndoSnapshot = (withClassIds = false) => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData) return;
@@ -2008,7 +1603,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       manualTowers: JSON.parse(JSON.stringify(realData.manualTowers || [])),
       manualWires: JSON.parse(JSON.stringify(realData.manualWires || [])),
       manualInsulators: JSON.parse(JSON.stringify(realData.manualInsulators || [])),
-      classIds: new Uint8Array(realData.classIds),
+      classIds: withClassIds ? new Uint8Array(realData.classIds) : undefined,
     };
 
     undoStackRef.current.push(snapshot);
@@ -2034,10 +1629,29 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     realData.manualTowers = lastSnapshot.manualTowers;
     realData.manualWires = lastSnapshot.manualWires;
     realData.manualInsulators = lastSnapshot.manualInsulators;
-    realData.classIds.set(lastSnapshot.classIds);
 
-    setDetectionVersion((v) => v + 1);
-    setDetectionNotice('↩️ 撤销成功 (Ctrl+Z): 已恢复上一步单次框选/标注状态！');
+    if (lastSnapshot.classIds) {
+      // Box-brush undo: restore the exact classIds snapshot and keep the
+      // worker cache in sync (the transferred buffer is owned by the worker).
+      realData.classIds.set(lastSnapshot.classIds);
+      const w = ensureClassWorker();
+      w.postMessage(
+        {
+          type: 'setClassIds',
+          requestId: -1,
+          segmentId: lastSnapshot.segmentId,
+          classIds: lastSnapshot.classIds.buffer,
+        },
+        [lastSnapshot.classIds.buffer]
+      );
+      setDetectionVersion((v) => v + 1);
+      setDetectionNotice('↩️ 撤销成功 (Ctrl+Z): 已恢复上一步单次框选状态！');
+      setTimeout(() => setDetectionNotice(null), 3000);
+      return;
+    }
+
+    void applyManualClassificationsToActiveSegment();
+    setDetectionNotice('↩️ 撤销成功 (Ctrl+Z): 正在恢复上一步标注状态…');
     setTimeout(() => setDetectionNotice(null), 3000);
   };
 
@@ -2066,20 +1680,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       window.removeEventListener('keyup', handleKeyUp);
     };
   }, [activeSegmentId]);
-
-  // Dynamically configure OrbitControls Mouse Buttons: Left = Pan (Move), Right = Rotate
-  useEffect(() => {
-    if (!controlsRef.current) return;
-    const controls = controlsRef.current;
-
-    // Requirement 1: Left Drag = Pan/Move Camera, Right Drag = Rotate Camera
-    controls.mouseButtons = {
-      LEFT: THREE.MOUSE.PAN,
-      MIDDLE: THREE.MOUSE.DOLLY,
-      RIGHT: THREE.MOUSE.ROTATE,
-    };
-    controls.enabled = true;
-  }, [activeCanvasMode, pickingTarget]);
 
   // Camera View Preset Helper
   const setCameraPresetView = (view: 'top' | 'side' | 'front' | 'iso') => {
@@ -2112,8 +1712,34 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     controlsRef.current.update();
   };
 
-  // Apply Manual Tagging to Active Segment
-  const applyManualClassificationsToActiveSegment = () => {
+  // Pre-initialize the classification worker cache for the active segment in
+  // the background (copies positions once, off the interaction path) so the
+  // first box-brush / tagging interaction never pays the copy cost.
+  useEffect(() => {
+    if (!activeSegmentId) return;
+    const realData = loadedPointCloudMapRef.current[activeSegmentId];
+    if (!realData) return;
+    const timer = window.setTimeout(() => {
+      try {
+        ensureClassWorkerSegment(realData, activeSegmentId);
+      } catch {
+        // worker unavailable: classification tasks surface error notices
+      }
+    }, 800);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSegmentId]);
+
+  useEffect(() => {
+    return () => {
+      classWorkerRef.current?.terminate();
+      classWorkerRef.current = null;
+      classWorkerSegmentsRef.current.clear();
+    };
+  }, []);
+
+  // Apply Manual Tagging to Active Segment (async: recompute runs in worker)
+  const applyManualClassificationsToActiveSegment = async () => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData) return;
@@ -2122,54 +1748,56 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const wires = realData.manualWires || [];
     const insulators = realData.manualInsulators || [];
 
-    const res = recomputeManualClassificationsData(
-      realData.positions,
-      realData.classIds,
-      realData.pointCount,
+    const res = await runClassTask(activeSegmentId, {
+      type: 'recompute',
       towers,
       wires,
-      insulators
-    );
+      insulators,
+    });
 
+    if (res.type !== 'recomputeResult') {
+      setDetectionNotice(`⚠️ 分类计算失败: ${res.error || '未知错误'}`);
+      setTimeout(() => setDetectionNotice(null), 4000);
+      return;
+    }
+
+    realData.classIds = new Uint8Array(res.classIds as ArrayBuffer);
     realData.stats = {
-      wireCount: res.wireCount,
-      towerCount: res.towerCount,
+      wireCount: res.stats.wireCount,
+      towerCount: res.stats.towerCount,
       groundCount: 0,
       vegCount: 0,
     };
 
     setColorMode('power_highlight');
     setDetectionVersion((v) => v + 1);
-    setDetectionNotice(`⚡ 手动/智能标记应用成功！重新分类为 杆塔: ${res.towerCount.toLocaleString()} 点, 导线: ${res.wireCount.toLocaleString()} 点, 绝缘子: ${res.insulatorCount.toLocaleString()} 点！`);
+    setDetectionNotice(`⚡ 手动/智能标记应用成功！重新分类为 杆塔: ${res.stats.towerCount.toLocaleString()} 点, 导线: ${res.stats.wireCount.toLocaleString()} 点, 绝缘子: ${res.stats.insulatorCount.toLocaleString()} 点！`);
     setTimeout(() => setDetectionNotice(null), 5000);
   };
 
   // 1-Click Auto Tower fitting from point cloud click (Digital Green Valley / LiDAR3D Industry Standard)
-  const handleAutoTowerFitFromClick = (clickPt: { x: number; y: number; z: number }) => {
+  const handleAutoTowerFitFromClick = async (clickPt: { x: number; y: number; z: number }) => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData) return;
 
     pushUndoSnapshot();
 
-    const positions = realData.positions;
     const searchRadius = 6.0;
-    let maxY = -Infinity;
-    let minY = Infinity;
-    let countNear = 0;
-
-    for (let i = 0; i < realData.pointCount; i++) {
-      const px = positions[i * 3];
-      const py = positions[i * 3 + 1];
-      const pz = positions[i * 3 + 2];
-
-      const distXZ = Math.hypot(px - clickPt.x, pz - clickPt.z);
-      if (distXZ <= searchRadius) {
-        if (py > maxY) maxY = py;
-        if (py < minY) minY = py;
-        countNear++;
-      }
+    const res = await runClassTask(activeSegmentId, {
+      type: 'towerFit',
+      clickPt,
+      searchRadius,
+    });
+    if (res.type !== 'towerFitResult') {
+      setDetectionNotice(`⚠️ 杆塔扫描失败: ${res.error || '未知错误'}`);
+      setTimeout(() => setDetectionNotice(null), 4000);
+      return;
     }
+
+    let maxY = res.scan.maxY as number;
+    let minY = res.scan.minY as number;
+    const countNear = res.scan.countNear as number;
 
     if (countNear < 10 || maxY === -Infinity) {
       maxY = clickPt.y + 15;
@@ -2183,13 +1811,13 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     if (!realData.manualTowers) realData.manualTowers = [];
     const towerName = `#${realData.manualTowers.length + 1} 杆塔`;
 
-    handleAddTowerTagWithCoords(towerName, uArm, lArm, 4.5, true);
+    await handleAddTowerTagWithCoords(towerName, uArm, lArm, 4.5, true);
     setDetectionNotice(`🎉 [1键采塔成功]: 自动侦测到 ${towerName} (高度: ${towerHeight}m)，已完成杆塔点云重分类！(Ctrl+Z 撤销)`);
     setTimeout(() => setDetectionNotice(null), 5000);
   };
 
   // Multi-Phase Conductor Batch Generation from Tower A to Tower B (中科艾维 Multi-Phase Wire Preset Standard)
-  const handleBatchWirePresetBetweenPoints = (
+  const handleBatchWirePresetBetweenPoints = async (
     pA: { x: number; y: number; z: number },
     pB: { x: number; y: number; z: number },
     presetId: string
@@ -2213,7 +1841,30 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
     if (!realData.manualWires) realData.manualWires = [];
 
-    preset.offsets.forEach((off) => {
+    // Auto-fit catenary sag ratios in the worker (one O(N) scan per phase, off main thread)
+    const queries = preset.offsets.map((off) => {
+      const sX = pA.x + px * off.dx;
+      const sZ = pA.z + pz * off.dx;
+      const sY = pA.y + off.dy;
+
+      const eX = pB.x + px * off.dx;
+      const eZ = pB.z + pz * off.dx;
+      const eY = pB.y + off.dy;
+
+      const sPt = { x: Number(sX.toFixed(1)), y: Number(sY.toFixed(1)), z: Number(sZ.toFixed(1)) };
+      const ePt = { x: Number(eX.toFixed(1)), y: Number(eY.toFixed(1)), z: Number(eZ.toFixed(1)) };
+      return { start: sPt, end: ePt, corridorRadius: preset.corridorRadius };
+    });
+
+    const res = await runClassTask(activeSegmentId, { type: 'fitSags', queries });
+    if (res.type !== 'fitSagsResult') {
+      setDetectionNotice(`⚠️ 弧垂拟合失败: ${res.error || '未知错误'}`);
+      setTimeout(() => setDetectionNotice(null), 4000);
+      return;
+    }
+    const sagRatios = res.sagRatios as number[];
+
+    preset.offsets.forEach((off, i) => {
       const sX = pA.x + px * off.dx;
       const sZ = pA.z + pz * off.dx;
       const sY = pA.y + off.dy;
@@ -2225,62 +1876,61 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       const sPt = { x: Number(sX.toFixed(1)), y: Number(sY.toFixed(1)), z: Number(sZ.toFixed(1)) };
       const ePt = { x: Number(eX.toFixed(1)), y: Number(eY.toFixed(1)), z: Number(eZ.toFixed(1)) };
 
-      // Auto-fit catenary sag ratio from actual point cloud data along this phase line
-      const matchedSag = fitWireSagFromPointCloud(
-        realData.positions,
-        realData.pointCount,
-        sPt,
-        ePt,
-        preset.corridorRadius
-      );
-
       const tag: ManualWireTag = {
         id: `wr-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
         name: `${preset.voltage} ${off.name}`,
         startPoint: sPt,
         endPoint: ePt,
         corridorRadius: preset.corridorRadius,
-        sagRatio: matchedSag,
+        sagRatio: sagRatios[i] ?? 0.025,
       };
       realData.manualWires.push(tag);
     });
 
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
     setDetectionNotice(`⚡ [多相挂线成功]: 已批量生成 ${preset.name} (${preset.wireCount} 相导线)，已完成点云弧垂自动匹配与导线重分类！(Ctrl+Z 撤销)`);
     setTimeout(() => setDetectionNotice(null), 5000);
   };
 
-  // 2D/3D Screen Rectangular Box Brush Reclassification
-  const handleApplyBoxBrushSelection = (minX: number, minY: number, maxX: number, maxY: number) => {
+  // 2D/3D Screen Rectangular Box Brush Reclassification (projection runs in worker)
+  const handleApplyBoxBrushSelection = async (minX: number, minY: number, maxX: number, maxY: number) => {
     if (!activeSegmentId || !cameraRef.current || !rendererRef.current) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData) return;
 
-    pushUndoSnapshot();
+    pushUndoSnapshot(true);
 
     const camera = cameraRef.current;
     const rect = rendererRef.current.domElement.getBoundingClientRect();
     const width = rect.width;
     const height = rect.height;
 
-    const positions = realData.positions;
-    const classIds = realData.classIds;
-    let reclassifiedCount = 0;
+    // Combined projection matrix: proj * viewInverse (column-major, 16 floats)
+    const matrix = new THREE.Matrix4()
+      .copy(camera.projectionMatrix)
+      .multiply(camera.matrixWorldInverse)
+      .toArray();
 
-    const projVec = new THREE.Vector3();
+    const res = await runClassTask(activeSegmentId, {
+      type: 'boxBrush',
+      matrix,
+      width,
+      height,
+      minX,
+      minY,
+      maxX,
+      maxY,
+      targetClass: brushTargetClass,
+    });
 
-    for (let i = 0; i < realData.pointCount; i++) {
-      projVec.set(positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
-      projVec.project(camera);
-
-      const screenX = ((projVec.x + 1) * width) / 2;
-      const screenY = ((-projVec.y + 1) * height) / 2;
-
-      if (screenX >= minX && screenX <= maxX && screenY >= minY && screenY <= maxY && projVec.z < 1) {
-        classIds[i] = brushTargetClass;
-        reclassifiedCount++;
-      }
+    if (res.type !== 'boxBrushResult') {
+      setDetectionNotice(`⚠️ 框选分类失败: ${res.error || '未知错误'}`);
+      setTimeout(() => setDetectionNotice(null), 4000);
+      return;
     }
+
+    const reclassifiedCount = res.count as number;
+    realData.classIds = new Uint8Array(res.classIds as ArrayBuffer);
 
     setColorMode('power_highlight');
     setDetectionVersion((v) => v + 1);
@@ -2289,7 +1939,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     setTimeout(() => setDetectionNotice(null), 5000);
   };
 
-  const handleAddTowerTagWithCoords = (
+  const handleAddTowerTagWithCoords = async (
     name?: string,
     upper?: { x: number; y: number; z: number },
     lower?: { x: number; y: number; z: number },
@@ -2320,14 +1970,14 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     realData.manualTowers.push(tag);
     setNewTowerName(`#${realData.manualTowers.length + 1} 杆塔`);
 
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
   };
 
   const handleAddTowerTag = () => {
-    handleAddTowerTagWithCoords();
+    void handleAddTowerTagWithCoords();
   };
 
-  const handleDeleteTowerTag = (tagId: string) => {
+  const handleDeleteTowerTag = async (tagId: string) => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData || !realData.manualTowers) return;
@@ -2335,10 +1985,10 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     pushUndoSnapshot();
 
     realData.manualTowers = realData.manualTowers.filter((t) => t.id !== tagId);
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
   };
 
-  const handleAddWireTagWithCoords = (
+  const handleAddWireTagWithCoords = async (
     name?: string,
     start?: { x: number; y: number; z: number },
     end?: { x: number; y: number; z: number },
@@ -2367,7 +2017,11 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     let autoSag = sag;
     if (autoSag === undefined || autoSag <= 0) {
       if (realData.positions && realData.pointCount > 0) {
-        autoSag = fitWireSagFromPointCloud(realData.positions, realData.pointCount, sPt, ePt, rad);
+        const res = await runClassTask(activeSegmentId, {
+          type: 'fitSags',
+          queries: [{ start: sPt, end: ePt, corridorRadius: rad }],
+        });
+        autoSag = res.type === 'fitSagsResult' ? (res.sagRatios as number[])[0] : 0.025;
       } else {
         autoSag = 0.025;
       }
@@ -2388,16 +2042,16 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     realData.manualWires.push(tag);
     setNewWireName(`导线通道 #${realData.manualWires.length + 1}`);
 
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
     setDetectionNotice(`⚡ [单根导线标记成功]: 确定双端点生成单根导线 (${tagName})，已自动匹配点云物理弧垂 (sagDepth = ${(autoSag * spanLen).toFixed(2)}m, ratio = ${autoSag})！`);
     setTimeout(() => setDetectionNotice(null), 4000);
   };
 
   const handleAddWireTag = () => {
-    handleAddWireTagWithCoords();
+    void handleAddWireTagWithCoords();
   };
 
-  const handleDeleteWireTag = (tagId: string) => {
+  const handleDeleteWireTag = async (tagId: string) => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData || !realData.manualWires) return;
@@ -2405,11 +2059,11 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     pushUndoSnapshot();
 
     realData.manualWires = realData.manualWires.filter((w) => w.id !== tagId);
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
   };
 
-  // Auto Fit Sag from Point Cloud Handler (点云自动匹配弧垂)
-  const handleAutoFitWireSag = (wireId: string) => {
+  // Auto Fit Sag from Point Cloud Handler (点云自动匹配弧垂, runs in worker)
+  const handleAutoFitWireSag = async (wireId: string) => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData || !realData.manualWires) return;
@@ -2419,26 +2073,24 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const wire = realData.manualWires.find((w) => w.id === wireId);
     if (!wire) return;
 
-    const matchedSag = fitWireSagFromPointCloud(
-      realData.positions,
-      realData.pointCount,
-      wire.startPoint,
-      wire.endPoint,
-      wire.corridorRadius
-    );
+    const res = await runClassTask(activeSegmentId, {
+      type: 'fitSags',
+      queries: [{ start: wire.startPoint, end: wire.endPoint, corridorRadius: wire.corridorRadius }],
+    });
+    const matchedSag = res.type === 'fitSagsResult' ? (res.sagRatios as number[])[0] : 0.025;
 
     wire.sagRatio = matchedSag;
 
     const spanLen = Math.hypot(wire.endPoint.x - wire.startPoint.x, wire.endPoint.z - wire.startPoint.z) || 100;
     const sagMeters = (matchedSag * spanLen).toFixed(2);
 
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
     setDetectionNotice(`🎯 [点云弧垂匹配成功]: 已自动依据 3D 点云匹配求解 ${wire.name} 最佳弧垂 (sagRatio=${matchedSag}, 深度=${sagMeters}m)！`);
     setTimeout(() => setDetectionNotice(null), 4500);
   };
 
   // Wire Fine-Tuning Handler (弧垂、缓冲区半径、挂点高度/高程微调)
-  const handleFineTuneWireTag = (
+  const handleFineTuneWireTag = async (
     wireId: string,
     updates: Partial<{
       sagRatio: number;
@@ -2461,13 +2113,13 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     if (updates.startYOffset !== undefined) wire.startPoint.y = Number((wire.startPoint.y + updates.startYOffset).toFixed(2));
     if (updates.endYOffset !== undefined) wire.endPoint.y = Number((wire.endPoint.y + updates.endYOffset).toFixed(2));
 
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
     setDetectionNotice(`🛠️ [导线微调成功]: 已更新 ${wire.name} 拟合参数并重新绘制 3D 导线！(Ctrl+Z 可撤销)`);
     setTimeout(() => setDetectionNotice(null), 3500);
   };
 
   // Add Manual Insulator Tag Handler
-  const handleAddInsulatorTagWithCoords = (
+  const handleAddInsulatorTagWithCoords = async (
     name?: string,
     top?: { x: number; y: number; z: number },
     bottom?: { x: number; y: number; z: number },
@@ -2504,12 +2156,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     realData.manualInsulators.push(tag);
     setNewInsulatorName(`绝缘子串 #${realData.manualInsulators.length + 1}`);
 
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
     setDetectionNotice(`⚡ [绝缘子串标记成功]: 成功生成 ${tagName} (长: ${insLen.toFixed(2)}m, 伞裙半径: ${insRad.toFixed(2)}m) 并更新重分类！`);
     setTimeout(() => setDetectionNotice(null), 4000);
   };
 
-  const handleDeleteInsulatorTag = (tagId: string) => {
+  const handleDeleteInsulatorTag = async (tagId: string) => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData || !realData.manualInsulators) return;
@@ -2517,11 +2169,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     pushUndoSnapshot();
 
     realData.manualInsulators = realData.manualInsulators.filter((ins) => ins.id !== tagId);
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
   };
 
   // 🤖 Insulator Spatial Feature Auto-Identification & 3D Point Cloud Clustering Algorithm
-  const handleAutoIdentifyInsulators = () => {
+  // (anchor density scans run in the classification worker)
+  const handleAutoIdentifyInsulators = async () => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData) return;
@@ -2533,9 +2186,6 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const refLength = insulatorLengthInput || 1.8;
     const refRadius = insulatorRadiusInput || 0.45;
     const toleranceFactor = (insulatorToleranceInput || 15) / 100.0;
-
-    const positions = realData.positions;
-    const pointCount = realData.pointCount || 0;
 
     // Search anchor candidates based on wire endpoints & tower upper/lower arm points
     const anchorPoints: { x: number; y: number; z: number; name: string }[] = [];
@@ -2567,6 +2217,19 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       );
     }
 
+    const res = await runClassTask(activeSegmentId, {
+      type: 'insulScan',
+      anchors: anchorPoints,
+      refLength,
+      refRadius,
+    });
+    if (res.type !== 'insulScanResult') {
+      setDetectionNotice(`⚠️ 绝缘子聚类扫描失败: ${res.error || '未知错误'}`);
+      setTimeout(() => setDetectionNotice(null), 4000);
+      return;
+    }
+    const scans = res.scans as Array<{ sumX: number; sumZ: number; ptCnt: number; minY: number; maxY: number }>;
+
     let addedCount = 0;
     let totalExtractedPts = 0;
     const existingIns = realData.manualInsulators;
@@ -2579,30 +2242,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       });
 
       if (!isDuplicate) {
-        // Query actual point cloud points in cylindrical neighborhood around anchor
-        let sumX = 0, sumZ = 0, ptCnt = 0;
-        let minY = Infinity, maxY = -Infinity;
-        const searchRadiusSq = (refRadius + 0.35) * (refRadius + 0.35);
-
-        if (positions && pointCount > 0) {
-          for (let p = 0; p < pointCount; p++) {
-            const px = positions[p * 3];
-            const py = positions[p * 3 + 1];
-            const pz = positions[p * 3 + 2];
-
-            const dx = px - anc.x;
-            const dz = pz - anc.z;
-            const dy = anc.y - py; // expected downward string
-
-            if (dx * dx + dz * dz <= searchRadiusSq && dy >= -0.5 && dy <= refLength * 1.6) {
-              sumX += px;
-              sumZ += pz;
-              ptCnt++;
-              if (py < minY) minY = py;
-              if (py > maxY) maxY = py;
-            }
-          }
-        }
+        const { sumX, sumZ, ptCnt, minY, maxY } = scans[i];
 
         // Fit insulator top and bottom points from real density cluster if available, else anchor
         let topPt = { x: anc.x, y: anc.y, z: anc.z };
@@ -2641,31 +2281,37 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       }
     });
 
-    applyManualClassificationsToActiveSegment();
+    await applyManualClassificationsToActiveSegment();
     setDetectionNotice(`🤖 [同特征绝缘子点云精准提取完成]: 聚类匹配比对特征 (长=${refLength}m, 半径=${refRadius}m, 容差=${insulatorToleranceInput}%)，识别出 ${addedCount} 串绝缘子并重分类为 Class 16！`);
     setTimeout(() => setDetectionNotice(null), 6000);
   };
 
-  const runDetectionOnActiveSegment = () => {
+  const runDetectionOnActiveSegment = async () => {
     if (!activeSegmentId) return;
     const realData = loadedPointCloudMapRef.current[activeSegmentId];
     if (!realData) return;
 
     pushUndoSnapshot();
 
-    const result = detectPowerCorridorFeatures(realData);
-    realData.classIds.set(result.classIds);
-    realData.towers = result.towers;
+    const res = await runClassTask(activeSegmentId, { type: 'detect' });
+    if (res.type !== 'detectResult') {
+      setDetectionNotice(`⚠️ 自动识别失败: ${res.error || '未知错误'}`);
+      setTimeout(() => setDetectionNotice(null), 4000);
+      return;
+    }
+
+    realData.classIds = new Uint8Array(res.classIds as ArrayBuffer);
+    realData.towers = res.towers;
     realData.stats = {
-      wireCount: result.wirePointCount,
-      towerCount: result.towerPointCount,
-      groundCount: result.groundPointCount,
-      vegCount: result.vegPointCount,
+      wireCount: res.wirePointCount as number,
+      towerCount: res.towerPointCount as number,
+      groundCount: res.groundPointCount as number,
+      vegCount: res.vegPointCount as number,
     };
 
     setColorMode('power_highlight');
     setDetectionVersion((v) => v + 1);
-    setDetectionNotice(`识别成功：双端双塔精确定位（起始塔、终端塔）共 ${result.towers.length} 座，导线点云 ${result.wirePointCount.toLocaleString()} 个！(Ctrl+Z 撤销)`);
+    setDetectionNotice(`识别成功：双端双塔精确定位（起始塔、终端塔）共 ${(res.towers as unknown[]).length} 座，导线点云 ${(res.wirePointCount as number).toLocaleString()} 个！(Ctrl+Z 撤销)`);
     setTimeout(() => setDetectionNotice(null), 5000);
   };
 
@@ -2852,17 +2498,17 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
   const pendingUploadFileRef = useRef<File | null>(null);
 
   useEffect(() => {
-    if (!isOpen || !pendingResult) return;
-    if (loadedRemoteKeysRef.current.has(pendingResult.key)) return;
-    loadedRemoteKeysRef.current.add(pendingResult.key);
+    if (!isOpen || !effectiveResult) return;
+    if (loadedRemoteKeysRef.current.has(effectiveResult.key)) return;
+    loadedRemoteKeysRef.current.add(effectiveResult.key);
     (async () => {
       try {
-        setDetectionNotice(`正在加载远程点云: ${pendingResult.name}`);
-        const blob = await fetch(pendingResult.url).then((r) => r.blob());
-        const file = new File([blob], pendingResult.name, { type: 'application/octet-stream' });
+        setDetectionNotice(`正在加载远程点云: ${effectiveResult.name}`);
+        const blob = await fetch(effectiveResult.url).then((r) => r.blob());
+        const file = new File([blob], effectiveResult.name, { type: 'application/octet-stream' });
         const existingSegmentId =
-          pendingResult.segmentId && loadedPointCloudMapRef.current[pendingResult.segmentId]
-            ? pendingResult.segmentId
+          effectiveResult.segmentId && loadedPointCloudMapRef.current[effectiveResult.segmentId]
+            ? effectiveResult.segmentId
             : null;
         await processLocalFiles([file]);
         if (existingSegmentId && pendingParsedDataRef.current) {
@@ -2878,7 +2524,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         setDetectionNotice(`远程点云加载失败: ${String(err)}`);
       }
     })();
-  }, [isOpen, pendingResult]);
+  }, [isOpen, effectiveResult]);
 
   useEffect(() => {
     if (!pendingAutoBuildRef.current || !importForm.fileName) return;
@@ -2958,17 +2604,29 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     return { proxyGeom, proxy };
   };
 
-  const applyPotreeCoreStyle = () => {
+  const applyPotreeCoreStyle = async () => {
     const pco = potreeCloudRef.current;
     const potree = potreeCoreRef.current;
     if (!pco || !potree) return;
+    const { PointColorType, PointSizeType, PointShape: PotreeShape } = await import('potree-core');
     const material = pco.material;
+    // Legacy PotreeConverter (1.7/2.x cloud.js) stores RGB as raw 0-255 values.
+    // potree-core defaults inputColorEncoding=SRGB + outputColorEncoding=LINEAR,
+    // which makes the vertex shader run `vColor = fromLinear(vColor)` and
+    // washes such colors out to white. Declare both LINEAR (ColorEncoding.LINEAR)
+    // to skip the conversion, matching the original potree renderer behavior.
+    material.inputColorEncoding = 0;
+    material.outputColorEncoding = 0;
+    // ADAPTIVE point sizing matches the official potree examples: close
+    // points stay small (crisp detail) while far points grow to cover the
+    // screen. `size` is the world-space point size multiplier (2*size*spacing
+    // in the shader), so the UI point-size slider maps directly onto it.
     material.size = pointSize;
     material.minSize = 1;
     material.maxSize = 8;
-    material.pointSizeType = PointSizeType.ATTENUATED;
+    material.pointSizeType = PointSizeType.ADAPTIVE;
     material.shape = pointShape === 'square' ? PotreeShape.SQUARE : PotreeShape.CIRCLE;
-    const modeMap: Record<string, PointColorType> = {
+    const modeMap: Record<string, number> = {
       rgb: PointColorType.RGB,
       class: PointColorType.CLASSIFICATION,
       height: PointColorType.HEIGHT,
@@ -2976,7 +2634,30 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       power_highlight: PointColorType.CLASSIFICATION,
       danger: PointColorType.CLASSIFICATION,
     };
-    material.pointColorType = modeMap[colorMode] ?? PointColorType.CLASSIFICATION;
+
+    // PotreeConverter 2.1.3 drops RGB/classification/intensity attributes for
+    // LAS inputs (output is position-only), so the requested color mode may
+    // have no backing attribute. Fall back to RGB, then HEIGHT, so the cloud
+    // is never rendered black.
+    const paAttrs: any[] = (pco as any)?.pcoGeometry?.pointAttributes?.attributes || [];
+    const attrNames = paAttrs.map((a) => String(a?.name ?? '').toLowerCase());
+    // potree-core legacy format exposes attribute names as numeric enums
+    // (POSITION_CARTESIAN=0, COLOR_PACKED=1, CLASSIFICATION=7, INTENSITY=6).
+    const hasClassification =
+      attrNames.includes('classification') || paAttrs.some((a) => Number(a?.name) === 7);
+    const hasColor =
+      attrNames.includes('color') || attrNames.includes('rgb') || paAttrs.some((a) => Number(a?.name) === 1);
+    let mode = modeMap[colorMode] ?? PointColorType.CLASSIFICATION;
+    if (mode === PointColorType.CLASSIFICATION && !hasClassification) {
+      mode = hasColor ? PointColorType.RGB : PointColorType.HEIGHT;
+    }
+    if (mode === PointColorType.RGB && !hasColor) mode = PointColorType.HEIGHT;
+    material.pointColorType = mode;
+    if (mode === PointColorType.HEIGHT) {
+      const bb = pco.getBoundingBoxWorld();
+      material.heightMin = bb.min.y;
+      material.heightMax = bb.max.y;
+    }
     const cls: Record<string, THREE.Vector4> = {
       DEFAULT: new THREE.Vector4(1, 1, 1, 1),
     };
@@ -3452,82 +3133,92 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     container.innerHTML = '';
 
     if (renderEngine === 'cesium') {
-      // 1. Initialize CesiumJS 3D Geo-Spatial Engine
-      const cesiumViewer = new Cesium.Viewer(container, {
-        animation: false,
-        timeline: false,
-        geocoder: false,
-        homeButton: false,
-        sceneModePicker: false,
-        baseLayerPicker: false,
-        navigationHelpButton: false,
-        selectionIndicator: false,
-        infoBox: false,
-      });
-      cesiumViewerRef.current = cesiumViewer;
+      // 1. Initialize CesiumJS 3D Geo-Spatial Engine.
+      //    Cesium is ~3MB of JS and is only needed for this engine, so it is
+      //    loaded lazily here instead of in the main bundle.
+      let destroyed = false;
+      (async () => {
+        const Cesium = await import('cesium');
+        await import('cesium/Build/Cesium/Widgets/widgets.css');
+        if (destroyed) return;
 
-      if (activeSegment) {
-        const realData = loadedPointCloudMapRef.current[activeSegment.id];
-        const centerLat = activeSegment.centerCoordinates?.lat || 30.2741;
-        const centerLon = activeSegment.centerCoordinates?.lon || 120.1551;
+        const cesiumViewer = new Cesium.Viewer(container, {
+          animation: false,
+          timeline: false,
+          geocoder: false,
+          homeButton: false,
+          sceneModePicker: false,
+          baseLayerPicker: false,
+          navigationHelpButton: false,
+          selectionIndicator: false,
+          infoBox: false,
+        });
+        cesiumViewerRef.current = cesiumViewer;
 
-        if (realData) {
-          const pointCollection = cesiumViewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
-          const maxPts = Math.min(realData.pointCount, pointBudget);
-          const stride = Math.max(1, Math.floor(realData.pointCount / maxPts));
+        if (activeSegment) {
+          const realData = loadedPointCloudMapRef.current[activeSegment.id];
+          const centerLat = activeSegment.centerCoordinates?.lat || 30.2741;
+          const centerLon = activeSegment.centerCoordinates?.lon || 120.1551;
 
-          for (let i = 0; i < realData.classIds.length; i += stride) {
-            const classId = realData.classIds[i];
-            if (!visibleClasses.includes(classId)) continue;
+          if (realData) {
+            const pointCollection = cesiumViewer.scene.primitives.add(new Cesium.PointPrimitiveCollection());
+            const maxPts = Math.min(realData.pointCount, pointBudget);
+            const stride = Math.max(1, Math.floor(realData.pointCount / maxPts));
 
-            const idx = i * 3;
-            const px = realData.positions[idx];
-            const py = realData.positions[idx + 1];
-            const pz = realData.positions[idx + 2];
+            for (let i = 0; i < realData.classIds.length; i += stride) {
+              const classId = realData.classIds[i];
+              if (!visibleClasses.includes(classId)) continue;
 
-            const cartesian = Cesium.Cartesian3.fromDegrees(
-              centerLon + pz * 0.00001,
-              centerLat + px * 0.00001,
-              40 + py
-            );
+              const idx = i * 3;
+              const px = realData.positions[idx];
+              const py = realData.positions[idx + 1];
+              const pz = realData.positions[idx + 2];
 
-            let cHex = '#94a3b8';
-            if (classId === 15) {
-              cHex = '#ffb700'; // Transmission Tower: Metallic Gold
-            } else if (classId === 14) {
-              cHex = '#00f2ff'; // Conductors/Wires: Neon Electric Cyan
-            } else if (realData.colors && realData.colors.length > idx + 2) {
-              const r = Math.floor(realData.colors[idx] * 255);
-              const g = Math.floor(realData.colors[idx + 1] * 255);
-              const b = Math.floor(realData.colors[idx + 2] * 255);
-              cHex = `rgb(${r},${g},${b})`;
-            } else if (classId === 2) {
-              cHex = '#854d0e'; // Ground Brown
-            } else if (classId >= 3 && classId <= 5) {
-              cHex = '#22c55e'; // Vegetation Green
-            } else {
-              cHex = '#64748b'; // Muted Slate
+              const cartesian = Cesium.Cartesian3.fromDegrees(
+                centerLon + pz * 0.00001,
+                centerLat + px * 0.00001,
+                40 + py
+              );
+
+              let cHex = '#94a3b8';
+              if (classId === 15) {
+                cHex = '#ffb700'; // Transmission Tower: Metallic Gold
+              } else if (classId === 14) {
+                cHex = '#00f2ff'; // Conductors/Wires: Neon Electric Cyan
+              } else if (realData.colors && realData.colors.length > idx + 2) {
+                const r = Math.floor(realData.colors[idx] * 255);
+                const g = Math.floor(realData.colors[idx + 1] * 255);
+                const b = Math.floor(realData.colors[idx + 2] * 255);
+                cHex = `rgb(${r},${g},${b})`;
+              } else if (classId === 2) {
+                cHex = '#854d0e'; // Ground Brown
+              } else if (classId >= 3 && classId <= 5) {
+                cHex = '#22c55e'; // Vegetation Green
+              } else {
+                cHex = '#64748b'; // Muted Slate
+              }
+
+              pointCollection.add({
+                position: cartesian,
+                color: Cesium.Color.fromCssColorString(cHex),
+                pixelSize: pointSize * 1.5,
+              });
             }
 
-            pointCollection.add({
-              position: cartesian,
-              color: Cesium.Color.fromCssColorString(cHex),
-              pixelSize: pointSize * 1.5,
+            // Fly camera to Cesium corridor location
+            cesiumViewer.camera.flyTo({
+              destination: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 350),
+              orientation: {
+                heading: Cesium.Math.toRadians(0),
+                pitch: Cesium.Math.toRadians(-45),
+              },
             });
           }
-
-          // Fly camera to Cesium corridor location
-          cesiumViewer.camera.flyTo({
-            destination: Cesium.Cartesian3.fromDegrees(centerLon, centerLat, 350),
-            orientation: {
-              heading: Cesium.Math.toRadians(0),
-              pitch: Cesium.Math.toRadians(-45),
-            },
-          });
         }
-      }
+      })();
 
       return () => {
+        destroyed = true;
         if (cesiumViewerRef.current) {
           try {
             cesiumViewerRef.current.destroy();
@@ -3555,7 +3246,20 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = false; // direct camera follow, avoids sticky feel
     controls.rotateSpeed = 1.2;
+    controls.zoomSpeed = 2.0; // wheel zoom is the primary navigation gesture
     controls.maxPolarAngle = Math.PI / 2 + 0.1;
+    // Left Drag = Pan/Move Camera, Right Drag = Rotate Camera
+    controls.mouseButtons = {
+      LEFT: THREE.MOUSE.PAN,
+      MIDDLE: THREE.MOUSE.DOLLY,
+      RIGHT: THREE.MOUSE.ROTATE,
+    };
+    // Screen-space panning keeps the camera movement aligned with the drag
+    // direction on screen (instead of the world XZ plane), which feels much
+    // more direct when orbiting an oblique point cloud.
+    controls.screenSpacePanning = true;
+    controls.panSpeed = 2.0;
+    controls.enabled = true;
     controlsRef.current = controls;
 
     const ambLight = new THREE.AmbientLight(0xffffff, 0.9);
@@ -3586,13 +3290,31 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       }
 
       controls.update();
-      if (!needsRender && !isPatrolling) return;
+      // potree-core loads octree nodes asynchronously; it has no
+      // "node loaded" event, so the needsRender gate would freeze the loop
+      // before fetched nodes ever appear. While the engine is active, keep a
+      // full updatePointClouds + render pass every frame — matching the
+      // official potree viewer loop. Fill-rate is bounded by ADAPTIVE point
+      // sizing instead of frame skipping.
+      const potreeCoreActive = renderEngine === 'potree_core' && !!potreeCloudRef.current;
+      if (!needsRender && !isPatrolling && !potreeCoreActive) return;
       needsRender = false;
       if (renderEngine === 'octree') {
         octreeLODRendererRef.current?.update(camera, height);
       }
       if (renderEngine === 'potree_core' && potreeCloudRef.current) {
         potreeCoreRef.current?.updatePointClouds([potreeCloudRef.current], camera, renderer);
+        // EDL-enabled PotreeRenderer handles the point-cloud pass + EDL post
+        // pass; other engines fall through to the plain render call below.
+        if (potreeRendererRef.current) {
+          potreeRendererRef.current.render({
+            renderer,
+            scene,
+            camera,
+            pointClouds: [potreeCloudRef.current],
+          });
+          return;
+        }
       }
       renderer.render(scene, camera);
     };
@@ -3650,6 +3372,8 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         }
         potreeCloudRef.current = null;
       }
+      potreeRendererRef.current?.dispose?.();
+      potreeRendererRef.current = null;
       potreeCoreRef.current = null;
       renderer.dispose();
     };
@@ -3674,12 +3398,15 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     octreeLODRendererRef.current = null;
     if (potreeCloudRef.current) {
       try {
+        scene.remove(potreeCloudRef.current);
         potreeCloudRef.current.dispose();
       } catch {
         // ignore
       }
       potreeCloudRef.current = null;
     }
+    potreeRendererRef.current?.dispose?.();
+    potreeRendererRef.current = null;
     potreeCoreRef.current = null;
 
     let rawPositions: Float32Array;
@@ -3754,31 +3481,134 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       geometryRef.current = proxyGeom;
       pointCloudMeshRef.current = proxy;
       pointCloudMaterialRef.current = null;
-      if (!pendingResult) {
-        // upload not finished yet; effect reruns when pendingResult appears
+      if (!effectiveResult) {
+        // upload not finished yet; effect reruns when the current segment's
+        // upload completes
         return;
       }
-      if (!pendingResult.potreeBaseUrl) {
+      if (!effectiveResult.potreeBaseUrl) {
         setRenderEngine(realData?.octree ? 'octree' : 'potree');
         return;
       }
-      const base = pendingResult.potreeBaseUrl;
-      const potree = new Potree();
-      potreeCoreRef.current = potree;
-      potree.pointBudget = pointBudget;
+      const base = effectiveResult.potreeBaseUrl;
+      const loadToken = ++potreeLoadTokenRef.current;
       (async () => {
-        try {
+        // PotreeConverter 1.7 writes cloud.js (metadata.json is 2.x-only);
+        // probe both so existing 2.x directories keep working.
+        const loadWith = async (metadataFile: string) => {
+          const { Potree } = await import('potree-core');
+          const potree = new Potree();
+          potreeCoreRef.current = potree;
+          // Keep the full 500W point budget (matches the octree engine);
+          // smoothness is handled by render throttling + point size caps
+          // instead of cutting the point count.
+          potree.pointBudget = pointBudget;
           const pco = await potree.loadPointCloud(
-            'metadata.json',
+            metadataFile,
             ({
               getUrl: (url: string) => `${base}${url}`,
               fetch: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
             }) as any
           );
+          // Set color encodings BEFORE the first render so the material's
+          // initial shader program is compiled with both LINEAR. Switching
+          // them later recompiles the program and three r185 loses the
+          // attribute bindings for the node geometries (points render black).
+          const pcoMat = (pco as any)?.material;
+          if (pcoMat) {
+            pcoMat.inputColorEncoding = 0;
+            pcoMat.outputColorEncoding = 0;
+          }
+          return pco;
+        };
+        let pco: Awaited<ReturnType<typeof loadWith>> | null = null;
+        try {
+          pco = await loadWith('metadata.json');
+        } catch {
+          pco = await loadWith('cloud.js');
+        }
+        if (!pco) return;
+        // A newer load (segment switch, engine switch, dispose) may have
+        // started while we were fetching — abandon silently instead of
+        // adding a stale cloud to the scene.
+        if (loadToken !== potreeLoadTokenRef.current) {
+          try {
+            (pco as any)?.dispose?.();
+          } catch {
+            // ignore
+          }
+          return;
+        }
+        try {
           potreeCloudRef.current = pco;
           scene.add(pco);
+          // Mirror the official potree/potree example pipeline: a
+          // PotreeRenderer with EDL enabled renders the point cloud layer
+          // into a float render target and applies Eye-Dome Lighting as a
+          // post pass — this is what gives the official viewer its crisp
+          // edge definition on sparse point clouds.
+          const { PotreeRenderer } = await import('potree-core');
+          potreeRendererRef.current?.dispose?.();
+          potreeRendererRef.current = new PotreeRenderer({
+            edl: {
+              enabled: true,
+              strength: 0.4,
+              radius: 1.4,
+              opacity: 1,
+              neighbourCount: 8,
+              pointCloudLayer: 1,
+            },
+          });
+          // The legacy converter stores node geometry relative to the cloud
+          // offset (boundingBox.min, often hundreds of km in projected
+          // coordinates), while the otabin/octree sources render at absolute
+          // coordinates. Reposition the cloud by its offset so all sources
+          // align in the shared scene space.
+          //
+          // The shared scene uses the same axis convention as the otabin
+          // path: LAS (x, y, z) -> three (x, z, -y) (Z-up elevation becomes
+          // three's Y-up). potree keeps raw LAS coordinates, so rotate the
+          // cloud -90° around X (local geometry) and apply the offset after
+          // the same rotation.
+          const offset = (pco as any)?.pcoGeometry?.offset;
+          if (offset) {
+            pco.rotation.x = -Math.PI / 2;
+            pco.position.set(offset.x, offset.z, -offset.y);
+          }
           applyPotreeCoreStyle();
-          controlsRef.current?.dispatchEvent({ type: 'change' });
+
+          // The potree directory stores raw projected coordinates (RTC offset
+          // is often hundreds of kilometers), while the camera defaults to the
+          // normalized origin — the frustum would never cover the cloud, so
+          // updatePointClouds loads nothing. Frame the camera onto the cloud.
+          // If the root node has not finished streaming yet the world bounds
+          // are degenerate — retry a few times until they are valid.
+          const cam = cameraRef.current;
+          const ctrls = controlsRef.current;
+          if (cam && ctrls) {
+            let frameAttempts = 0;
+            const frameCloud = () => {
+              if (loadToken !== potreeLoadTokenRef.current) return;
+              if (frameAttempts++ > 12) return;
+              const box = pco.getBoundingBoxWorld();
+              const center = box.getCenter(new THREE.Vector3());
+              const size = box.getSize(new THREE.Vector3());
+              const maxDim = Math.max(size.x, size.y, size.z, 1);
+              if (maxDim <= 1) {
+                window.setTimeout(frameCloud, 500);
+                return;
+              }
+              const dist = maxDim / (2 * Math.tan((cam.fov * Math.PI) / 360));
+              cam.position.set(center.x, center.y + maxDim * 0.8, center.z + dist * 1.15);
+              cam.near = Math.max(0.1, maxDim / 500);
+              cam.far = Math.max(1000, dist * 10);
+              cam.updateProjectionMatrix();
+              ctrls.target.set(center.x, center.y + maxDim * 0.15, center.z);
+              ctrls.update();
+              controlsRef.current?.dispatchEvent({ type: 'change' });
+            };
+            frameCloud();
+          }
         } catch (err) {
           console.warn('Potree core load failed:', err);
           setRenderEngine(realData?.octree ? 'octree' : 'potree');
@@ -3822,7 +3652,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       const centerY = spanZ / 3;
       controlsRef.current.target.set(0, centerY, 0);
     }
-  }, [isOpen, activeSegment?.id, renderEngine, dataRevision, pendingResult?.potreeBaseUrl]);
+  }, [isOpen, activeSegment?.id, renderEngine, dataRevision, effectiveResult?.potreeBaseUrl]);
 
   // Display settings only update shader uniforms/LUT and the sampling index buffer.
   useEffect(() => {
@@ -3831,7 +3661,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       octreeLODRendererRef.current?.setBudget(pointBudget);
     }
     if (renderEngine === 'potree_core') {
-      applyPotreeCoreStyle();
+      void applyPotreeCoreStyle();
       return;
     }
     const material = pointCloudMaterialRef.current;
@@ -3846,8 +3676,35 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
     const newLut = buildClassLutTexture(visibleClasses);
     material.uniforms.uClassLut.value = newLut;
     if (oldLut && oldLut !== newLut) oldLut.dispose();
-    material.uniforms.uColorMode.value = modeMap[colorMode] ?? 4;
-    material.uniforms.uHasColor.value = realData?.colors?.length ? 1 : 0;
+    const mode = modeMap[colorMode] ?? 4;
+    // Real color availability:
+    // - octree engine: colors live in the octree buffer (the picking proxy
+    //   geometry has none, so it must not drive this flag).
+    // - potree engine: the geometry color attribute may exist but be all
+    //   zeros when the source had no RGB — sample it instead of trusting
+    //   attribute presence.
+    let hasColor = 0;
+    if (renderEngine === 'octree') {
+      const oc = (octreeLODRendererRef.current as any)?.octree;
+      hasColor = oc && oc.colors && oc.colors.length ? 1 : 0;
+    } else {
+      const colorAttr = geometry.getAttribute?.('color');
+      const arr: Float32Array | undefined = colorAttr && colorAttr.array;
+      if (arr && arr.length > 0) {
+        const stride = Math.max(1, Math.floor(arr.length / 3 / 200));
+        let sum = 0;
+        let n = 0;
+        for (let i = 0; i + 2 < arr.length; i += stride * 3) {
+          sum += arr[i] + arr[i + 1] + arr[i + 2];
+          n++;
+        }
+        hasColor = n > 0 && sum / n > 0.02 ? 1 : 0;
+      }
+    }
+    material.uniforms.uHasColor.value = hasColor;
+    // No color data + rgb mode would render pure black/white — fall back to
+    // classification coloring so the cloud stays visible.
+    material.uniforms.uColorMode.value = mode === 0 && !hasColor ? 1 : mode;
     material.uniforms.uSpanZ.value = realData?.spanZ || 35;
     material.uniforms.uPointSize.value = pointSize;
     material.uniforms.uEdlStrength.value = useEDL ? edlStrength : 0;
@@ -4024,33 +3881,41 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       overlaysGroup.add(botMesh);
     });
 
-    // 4. Render Live Drawing Rubberband Line Preview for Insulator Tagging
+    // 4. Render Live Drawing Rubberband Line Preview for Insulator Tagging.
+    //    The guide line + end sphere are created once per pStart change and
+    //    updated imperatively on pointer move (see picking effect); rebuilding
+    //    them on every hoveredCoords change was a per-mousemove GPU allocation.
     const pStart = insulatorDragStartPoint || insulatorTempStartPoint || (wizardState.mode === 'insulator' ? wizardState.tempPoint : null);
+    guideLineRef.current = null;
+    guideEndSphereRef.current = null;
     if (pStart) {
       const tx = pStart.x, ty = pStart.y, tz = pStart.z;
+      pStartRef.current = pStart;
       const spGeo = new THREE.SphereGeometry(0.03, 12, 12);
       const spMatStart = new THREE.MeshBasicMaterial({ color: 0x22c55e });
       const startMesh = new THREE.Mesh(spGeo, spMatStart);
       startMesh.position.set(tx, ty, tz);
       overlaysGroup.add(startMesh);
 
-      if (hoveredCoords) {
-        const bx = hoveredCoords.x, by = hoveredCoords.y, bz = hoveredCoords.z;
+      // Glowing Cyan Vector Guide Line (a single thin line as requested)
+      const guideGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(tx, ty, tz),
+        new THREE.Vector3(tx, ty, tz),
+      ]);
+      const guideMat = new THREE.LineBasicMaterial({ color: 0x00f2ff, linewidth: 1 });
+      const guideLine = new THREE.Line(guideGeo, guideMat);
+      guideLine.visible = false;
+      overlaysGroup.add(guideLine);
+      guideLineRef.current = guideLine;
 
-        // Glowing Cyan Vector Guide Line (a single thin line as requested)
-        const guideGeo = new THREE.BufferGeometry().setFromPoints([
-          new THREE.Vector3(tx, ty, tz),
-          new THREE.Vector3(bx, by, bz)
-        ]);
-        const guideMat = new THREE.LineBasicMaterial({ color: 0x00f2ff, linewidth: 1 });
-        overlaysGroup.add(new THREE.Line(guideGeo, guideMat));
-
-        // End indicator sphere (small and delicate)
-        const spMatEnd = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
-        const endMesh = new THREE.Mesh(spGeo, spMatEnd);
-        endMesh.position.set(bx, by, bz);
-        overlaysGroup.add(endMesh);
-      }
+      // End indicator sphere (small and delicate)
+      const spMatEnd = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
+      const endMesh = new THREE.Mesh(spGeo, spMatEnd);
+      endMesh.visible = false;
+      overlaysGroup.add(endMesh);
+      guideEndSphereRef.current = endMesh;
+    } else {
+      pStartRef.current = null;
     }
 
     scene.add(overlaysGroup);
@@ -4060,8 +3925,11 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         const grp = sceneRef.current.getObjectByName('manual_tags_3d_overlays');
         if (grp) sceneRef.current.remove(grp);
       }
+      guideLineRef.current = null;
+      guideEndSphereRef.current = null;
+      pStartRef.current = null;
     };
-  }, [isOpen, activeSegmentId, renderEngine, detectionVersion, insulatorDragStartPoint, insulatorTempStartPoint, hoveredCoords, wizardState, insulatorRadiusInput, isShiftPressed]);
+  }, [isOpen, activeSegmentId, renderEngine, detectionVersion, insulatorDragStartPoint, insulatorTempStartPoint, wizardState, insulatorRadiusInput, isShiftPressed]);
 
   // 3D Point Cloud Picking & Hover Reticle Handler
   useEffect(() => {
@@ -4090,6 +3958,53 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
 
     let downPos = { x: 0, y: 0 };
     let isDraggingBox = false;
+    // Hover raycasts are throttled (~15Hz): pointermove can fire at up to
+    // 1000Hz, and a full raycast over the 500k-point picking proxy per event
+    // saturates the main thread during Shift-tool usage.
+    let lastHoverRaycast = 0;
+    let lastHoverStatePush = 0;
+
+    const updateBoxSelectionRect = (x1: number, y1: number, x2: number, y2: number) => {
+      const el = boxSelectionRectRef.current;
+      if (!el) return;
+      el.style.display = 'block';
+      el.style.left = `${Math.min(x1, x2)}px`;
+      el.style.top = `${Math.min(y1, y2)}px`;
+      el.style.width = `${Math.abs(x2 - x1)}px`;
+      el.style.height = `${Math.abs(y2 - y1)}px`;
+    };
+    const hideBoxSelectionRect = () => {
+      if (boxSelectionRectRef.current) boxSelectionRectRef.current.style.display = 'none';
+    };
+    const updateGuideTo = (end: { x: number; y: number; z: number }) => {
+      const start = pStartRef.current;
+      const gl = guideLineRef.current;
+      if (start && gl) {
+        gl.geometry.setFromPoints([
+          new THREE.Vector3(start.x, start.y, start.z),
+          new THREE.Vector3(end.x, end.y, end.z),
+        ]);
+        gl.visible = true;
+      }
+      const es = guideEndSphereRef.current;
+      if (es) {
+        es.position.set(end.x, end.y, end.z);
+        es.visible = true;
+      }
+    };
+    const hideGuide = () => {
+      if (guideLineRef.current) guideLineRef.current.visible = false;
+      if (guideEndSphereRef.current) guideEndSphereRef.current.visible = false;
+    };
+    // Latest value for imperative reads (pointerup); the React state copy is
+    // throttled and only feeds the HUD coordinate text.
+    const pushHoveredCoords = (c: { x: number; y: number; z: number } | null) => {
+      hoveredCoordsRef.current = c;
+      const now = performance.now();
+      if (now - lastHoverStatePush < 120) return;
+      lastHoverStatePush = now;
+      setHoveredCoords(c);
+    };
 
     const getPtMesh = () => {
       if (pointCloudMeshRef.current) return pointCloudMeshRef.current;
@@ -4106,12 +4021,12 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       if (isDraggingBox) {
         canvas.style.cursor = COLLISION_CROSSHAIR_CURSOR;
         const rect = canvas.getBoundingClientRect();
-        setBoxSelectionRect({
-          x1: downPos.x - rect.left,
-          y1: downPos.y - rect.top,
-          x2: e.clientX - rect.left,
-          y2: e.clientY - rect.top,
-        });
+        updateBoxSelectionRect(
+          downPos.x - rect.left,
+          downPos.y - rect.top,
+          e.clientX - rect.left,
+          e.clientY - rect.top
+        );
         return;
       }
 
@@ -4145,12 +4060,17 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         // Shift is NOT held: Show camera navigation cursor, hide collision reticle
         canvas.style.cursor = 'grab';
         reticleGroup.visible = false;
-        if (hoveredCoords !== null) setHoveredCoords(null);
+        hideGuide();
+        if (hoveredCoordsRef.current !== null) pushHoveredCoords(null);
         return;
       }
 
       // Shift is held: Show collision crosshair cursor & 3D reticle
       canvas.style.cursor = COLLISION_CROSSHAIR_CURSOR;
+
+      const now = performance.now();
+      if (now - lastHoverRaycast < 66) return; // throttled hover raycast
+      lastHoverRaycast = now;
 
       const rect = canvas.getBoundingClientRect();
       const mouse = new THREE.Vector2(
@@ -4172,14 +4092,17 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           }
           reticleGroup.position.set(hx, hy + 0.1, hz);
           reticleGroup.visible = true;
-          setHoveredCoords({
+          const coords = {
             x: Number(hx.toFixed(3)),
             y: Number(hy.toFixed(3)),
             z: Number(hz.toFixed(3)),
-          });
+          };
+          updateGuideTo(coords);
+          pushHoveredCoords(coords);
         } else {
           reticleGroup.visible = false;
-          setHoveredCoords(null);
+          hideGuide();
+          pushHoveredCoords(null);
         }
       }
     };
@@ -4225,7 +4148,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             const rect = canvas.getBoundingClientRect();
             const canvasX = e.clientX - rect.left;
             const canvasY = e.clientY - rect.top;
-            setBoxSelectionRect({ x1: canvasX, y1: canvasY, x2: canvasX, y2: canvasY });
+            updateBoxSelectionRect(canvasX, canvasY, canvasX, canvasY);
           }
         } else {
           // Regular Left Click/Drag (No Shift): OrbitControls handles Camera Pan/Move/Rotate
@@ -4262,7 +4185,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
           new THREE.Vector3(insulatorDragStartPoint.x, insulatorDragStartPoint.y, insulatorDragStartPoint.z)
         );
         const intersectPoint = new THREE.Vector3();
-        let endCoords = hoveredCoords;
+        let endCoords = hoveredCoordsRef.current;
         if (raycaster.ray.intersectPlane(plane, intersectPoint)) {
           endCoords = {
             x: Number(intersectPoint.x.toFixed(3)),
@@ -4295,7 +4218,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       // Handle Box Brush selection drag (Shift + Left Drag or Box Brush mode drag)
       if (isDraggingBox && dragDist > 10) {
         isDraggingBox = false;
-        setBoxSelectionRect(null); // Box selection rectangle immediately vanishes when drag finishes!
+        hideBoxSelectionRect(); // Box selection rectangle immediately vanishes when drag finishes!
         const rect = canvas.getBoundingClientRect();
         const x1 = Math.min(downPos.x, e.clientX) - rect.left;
         const x2 = Math.max(downPos.x, e.clientX) - rect.left;
@@ -4306,7 +4229,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
         return;
       }
 
-      setBoxSelectionRect(null);
+      hideBoxSelectionRect();
       isDraggingBox = false;
 
       if (dragDist > 6) return; // Ignore drag clicks for single point pick
@@ -4451,6 +4374,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
       canvas.removeEventListener('pointerdown', onPointerDown);
       canvas.removeEventListener('pointerup', onPointerUp);
       scene.remove(reticleGroup);
+      hoveredCoordsRef.current = null;
       setHoveredCoords(null);
     };
   }, [pickingTarget, wizardState, activeCanvasMode, selectedWirePreset, brushTargetClass, multiWireTempStartPoint, measureTempPoint, isShiftPressed]);
@@ -5208,23 +5132,19 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             </button>
           </div>
 
-          {/* Box Brush Selection Rubber-band Overlay */}
-          {boxSelectionRect && (
-            <div
-              className="absolute pointer-events-none border-2 border-dashed border-emerald-400 bg-transparent z-50 shadow-[0_0_12px_rgba(16,185,129,0.3)]"
-              style={{
-                left: Math.min(boxSelectionRect.x1, boxSelectionRect.x2),
-                top: Math.min(boxSelectionRect.y1, boxSelectionRect.y2),
-                width: Math.abs(boxSelectionRect.x2 - boxSelectionRect.x1),
-                height: Math.abs(boxSelectionRect.y2 - boxSelectionRect.y1),
-              }}
-            >
-              <div className="absolute -top-6 left-0 text-[10px] bg-slate-900/90 text-emerald-300 font-mono px-2 py-0.5 rounded border border-emerald-400/50 shadow font-bold flex items-center gap-1.5 whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                <span>Shift+左键 框选重分类中...</span>
-              </div>
+          {/* Box Brush Selection Rubber-band Overlay.
+            Driven imperatively via boxSelectionRectRef (hidden by default) so
+            dragging does not re-render the whole component per pointermove. */}
+          <div
+            ref={boxSelectionRectRef}
+            className="absolute pointer-events-none border-2 border-dashed border-emerald-400 bg-transparent z-50 shadow-[0_0_12px_rgba(16,185,129,0.3)]"
+            style={{ display: 'none' }}
+          >
+            <div className="absolute -top-6 left-0 text-[10px] bg-slate-900/90 text-emerald-300 font-mono px-2 py-0.5 rounded border border-emerald-400/50 shadow font-bold flex items-center gap-1.5 whitespace-nowrap">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+              <span>Shift+左键 框选重分类中...</span>
             </div>
-          )}
+          </div>
 
           {/* Floating Display & Render Settings Popover Overlay */}
           {isDisplaySettingsOpen && (
@@ -5245,7 +5165,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
               {/* Render Engine Selector */}
               <div className="space-y-1.5">
                 <span className="text-[11px] text-slate-400 font-bold block">1. 三维渲染引擎:</span>
-                <div className="grid grid-cols-3 gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
+                <div className="grid grid-cols-2 gap-1 bg-black/40 p-1 rounded-xl border border-white/10">
                   <button
                     onClick={() => setRenderEngine('potree')}
                     className={`py-1.5 rounded-lg text-center font-bold cursor-pointer transition-all ${
@@ -5275,6 +5195,16 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
                     }`}
                   >
                     Octree LOD
+                  </button>
+                  <button
+                    onClick={() => setRenderEngine('potree_core')}
+                    className={`py-1.5 rounded-lg text-center font-bold cursor-pointer transition-all ${
+                      renderEngine === 'potree_core'
+                        ? 'bg-fuchsia-600 text-white shadow-md border border-fuchsia-400'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    Potree Core
                   </button>
                 </div>
               </div>
@@ -6722,7 +6652,7 @@ export const PointCloudCorridorViewer: React.FC<PointCloudCorridorViewerProps> =
             <button
               type="button"
               onClick={() => {
-                applyManualClassificationsToActiveSegment();
+                void applyManualClassificationsToActiveSegment();
                 setIsManualTaggingPanelOpen(false);
               }}
               className="w-full py-2.5 bg-gradient-to-r from-amber-500 via-amber-400 to-amber-500 hover:from-amber-400 hover:to-amber-300 text-slate-950 font-black rounded-xl shadow-xl border border-amber-300 transition-all cursor-pointer flex items-center justify-center gap-2 text-xs"

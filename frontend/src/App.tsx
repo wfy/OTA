@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, lazy, Suspense } from 'react';
 import {
   Conductor,
   Insulator,
@@ -12,17 +12,20 @@ import { TYPICAL_METEOROLOGICAL_ZONES } from './data/meteorology';
 import { calculateAllConditions } from './utils/conductorPhysics';
 import { calculateInsulatorWindSwing } from './utils/insulatorPhysics';
 import { ParamInputs } from './components/ParamInputs';
-import { ChartsView } from './components/ChartsView';
-import { WindSwingViewer } from './components/WindSwingViewer';
-import { StringingTable } from './components/StringingTable';
-import { ComplianceReport } from './components/ComplianceReport';
-import { AiAssistant } from './components/AiAssistant';
-import { FormulaModal } from './components/FormulaModal';
 import { PointCloudCorridorViewer } from './components/PointCloudCorridorViewer';
 import { UploadPanel, UploadPanelHandle } from './components/UploadPanel';
 import { api } from './api/client';
 import { useAppStore } from './store/useAppStore';
 import { Sliders, X } from 'lucide-react';
+
+// Code-split non-critical views so the initial bundle stays lean (LCP):
+// each view ships in its own chunk and loads on first open.
+const ChartsView = lazy(() => import('./components/ChartsView').then((m) => ({ default: m.ChartsView })));
+const WindSwingViewer = lazy(() => import('./components/WindSwingViewer').then((m) => ({ default: m.WindSwingViewer })));
+const StringingTable = lazy(() => import('./components/StringingTable').then((m) => ({ default: m.StringingTable })));
+const ComplianceReport = lazy(() => import('./components/ComplianceReport').then((m) => ({ default: m.ComplianceReport })));
+const AiAssistant = lazy(() => import('./components/AiAssistant').then((m) => ({ default: m.AiAssistant })));
+const FormulaModal = lazy(() => import('./components/FormulaModal').then((m) => ({ default: m.FormulaModal })));
 
 export default function App() {
   const uploadPanelRef = useRef<UploadPanelHandle>(null);
@@ -207,6 +210,13 @@ export default function App() {
     <div className="relative w-screen h-screen overflow-hidden bg-[#070a12] text-slate-100 font-sans selection:bg-cyan-500 selection:text-slate-950 transition-colors duration-300">
       {/* 1. Full-Screen Main Visualization Stage (Default Backdrop Canvas) */}
       <main className="absolute inset-0 z-0 w-full h-full overflow-hidden">
+        <Suspense
+          fallback={
+            <div className="w-full h-full flex items-center justify-center bg-slate-950/75 text-cyan-300 text-sm">
+              加载视图…
+            </div>
+          }
+        >
         {activeTab === 'profile' && (
           <div className="w-full h-full">
             <PointCloudCorridorViewer
@@ -269,6 +279,7 @@ export default function App() {
             />
           </div>
         )}
+        </Suspense>
       </main>
 
 
@@ -416,23 +427,25 @@ export default function App() {
       )}
 
       {/* 5. Floating AI Assistant Drawer */}
-      <AiAssistant
-        isOpen={isAiOpen}
-        onClose={() => setIsAiOpen(false)}
-        contextData={aiContextData}
-      />
+      <Suspense fallback={null}>
+        <AiAssistant
+          isOpen={isAiOpen}
+          onClose={() => setIsAiOpen(false)}
+          contextData={aiContextData}
+        />
 
-      {/* 6. Formula & Physics Calculation Workflow Modal */}
-      <FormulaModal
-        isOpen={formulaModalState.isOpen}
-        initialTab={formulaModalState.tab}
-        onClose={() => setFormulaModalState((prev) => ({ ...prev, isOpen: false }))}
-        insulatorRes={insulatorRes}
-        conductor={selectedConductor}
-        insulator={selectedInsulator}
-        tower={tower}
-        windCondition={conditions.find((c) => c.id === selectedConditionId)}
-      />
+        {/* 6. Formula & Physics Calculation Workflow Modal */}
+        <FormulaModal
+          isOpen={formulaModalState.isOpen}
+          initialTab={formulaModalState.tab}
+          onClose={() => setFormulaModalState((prev) => ({ ...prev, isOpen: false }))}
+          insulatorRes={insulatorRes}
+          conductor={selectedConductor}
+          insulator={selectedInsulator}
+          tower={tower}
+          windCondition={conditions.find((c) => c.id === selectedConditionId)}
+        />
+      </Suspense>
 
     </div>
   );

@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import dotenv from "dotenv";
+import compression from "compression";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
@@ -10,6 +11,7 @@ const app = express();
 const PORT = 3000;
 
 app.use(express.json());
+app.use(compression());
 
 // Lazy-initialized Gemini client
 let aiClient: GoogleGenAI | null = null;
@@ -67,6 +69,7 @@ ${JSON.stringify(context || {}, null, 2)}
 });
 
 async function startServer() {
+  console.log(`[server] NODE_ENV=${process.env.NODE_ENV}`);
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
